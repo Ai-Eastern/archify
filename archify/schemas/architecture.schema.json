@@ -2,6 +2,109 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/tt-a1i/archify/schemas/architecture.schema.json",
   "title": "Archify Architecture Diagram",
+  "$defs": {
+    "developerGuideSourceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "common.schema.json#/$defs/id" }
+    },
+    "developerGuideItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "text", "source_refs"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 280 },
+        "source_refs": { "$ref": "#/$defs/developerGuideSourceRefs" }
+      }
+    },
+    "developerGuideInterfaceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "direction", "text", "source_refs"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "direction": { "enum": ["provided", "required", "bidirectional", "observed"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 280 },
+        "source_refs": { "$ref": "#/$defs/developerGuideSourceRefs" }
+      }
+    },
+    "developerGuide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation_scope", "summary", "sections"],
+      "properties": {
+        "implementation_scope": { "enum": ["repository", "external", "generated"] },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "source_refs"],
+          "properties": {
+            "text": { "type": "string", "minLength": 1, "maxLength": 240 },
+            "source_refs": { "$ref": "#/$defs/developerGuideSourceRefs" }
+          }
+        },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "items"],
+                "properties": {
+                  "kind": { "const": "flow" },
+                  "items": { "type": "array", "minItems": 3, "maxItems": 7, "items": { "$ref": "#/$defs/developerGuideItem" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "items"],
+                "properties": {
+                  "kind": { "const": "interfaces" },
+                  "items": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "$ref": "#/$defs/developerGuideInterfaceItem" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "items"],
+                "properties": {
+                  "kind": { "const": "state" },
+                  "items": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "$ref": "#/$defs/developerGuideItem" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "items"],
+                "properties": {
+                  "kind": { "const": "constraints" },
+                  "items": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "$ref": "#/$defs/developerGuideItem" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "items"],
+                "properties": {
+                  "kind": { "const": "change_points" },
+                  "items": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "$ref": "#/$defs/developerGuideItem" } }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "diagram_type", "meta", "components"],
@@ -105,6 +208,9 @@
               "additionalProperties": false,
               "required": ["path"],
               "properties": {
+                "id": { "$ref": "common.schema.json#/$defs/id" },
+                "role": { "enum": ["definition", "export", "registration", "callsite", "guard", "test", "schema", "documentation"] },
+                "symbol": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^\\S(?:[\\s\\S]*\\S)?$" },
                 "path": { "type": "string", "minLength": 1, "maxLength": 240 },
                 "line": { "type": "integer", "minimum": 1 },
                 "end_line": { "type": "integer", "minimum": 1 },
@@ -112,6 +218,7 @@
               }
             }
           },
+          "developer_guide": { "$ref": "#/$defs/developerGuide" },
           "row": { "type": "integer", "minimum": 0 },
           "col": { "type": "integer", "minimum": 0 },
           "pos": { "$ref": "common.schema.json#/$defs/point" },

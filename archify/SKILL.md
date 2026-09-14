@@ -12,6 +12,8 @@ metadata:
 
 Create a self-contained, interactive HTML diagram from a small typed JSON specification. Static output is the default; enable motion only when the user asks for a demo or presentation.
 
+For nested architecture exploration with separate internal diagrams or shared-object definition links, read [`references/architecture-atlas.md`](references/architecture-atlas.md). Author each member with the architecture contract, then use `deliver atlas` for the complete offline bundle.
+
 ## Fast authoring path
 
 Use this bounded path for ordinary generation. Do not read the optional Viewer Runtime reference unless the user asks about those features.
@@ -93,6 +95,14 @@ Read Mermaid for topology and meaning, then author fresh Archify JSON; do not me
 
 Read `references/authoring-contract.md` only when you need field enums, spacing math, geometry repair rules, repository evidence, or mode-specific placement.
 
+For an evidence-backed Architecture node quick look or developer guide, read
+[Architecture node developer guides](references/authoring-contract.md#architecture-node-developer-guides)
+before authoring. Pin one repository revision, attach every guide fact to
+component-local source IDs, and keep semantic review distinct from source-location
+verification. In an Atlas, the canonical component alone owns the guide; follow
+[Canonical developer guides](references/architecture-atlas.md#canonical-developer-guides)
+for reference navigation and history.
+
 ## Delivery
 
 Use `validate` during repair and `deliver` once for final acceptance. Delivery freezes the exact specification bytes into a private same-directory snapshot, renders and checks that snapshot, atomically commits the HTML, and reports SHA-256 plus byte counts for both specification and artifact. This is deterministic artifact evidence; it does not exercise the Viewer in a browser.
@@ -113,7 +123,9 @@ Add `--open` only when the user wants an immediate local preview. For an active 
 node bin/archify.mjs preview <type> <input>.json <output>.html --quality showcase
 ```
 
-Never start preview by default. Read `references/delivery-contract.md` when using preview, repository evidence, export receipts, visual review, or post-commit opening.
+Never start preview by default. Read `references/delivery-contract.md` when using preview, repository evidence, node developer-guide receipts, export receipts, visual review, or post-commit opening.
+
+For Atlas handoff, provide the checked HTML link and a preview image from the final artifact's visual evidence. Keep automatic HTML file-panel opening off; it can impose unnecessary work on the host application. An explicit request to open the result still applies: use the browser unless the user names another surface. Compact packaging reduces artifact bytes; report any host responsiveness measurements separately.
 
 ## Optional viewer capabilities
 

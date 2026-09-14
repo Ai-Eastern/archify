@@ -1,5 +1,7 @@
 # Delivery contract
 
+For `deliver atlas`, use the [Architecture Atlas contract](architecture-atlas.md): inputs are a manifest plus local architecture members, and final checks cover every embedded member and the bundle. The final self-contained HTML stores the unchanged logical bundle in a deterministic, digest-checked gzip envelope with an inline offline fallback. Receipt and member checks apply to restored bytes, while the bundle receipt identifies the physical compressed file. The ordinary single-diagram contract below remains unchanged.
+
 ## Validate and deliver
 
 Use `validate` after every candidate edit. CLI HTML output paths must end in `.html`, including after symbolic-link resolution.
@@ -31,6 +33,72 @@ The delivery interface exposes three separate claims:
 3. Perceptual visual review records a human or image-capable reviewer's judgment.
 
 Passing one claim never implies either of the others. Never claim that the deterministic receipt includes visual review. It does not include browser evidence either.
+
+### Developer-guide delivery evidence
+
+An Architecture input with at least one `components[].developer_guide` emits one
+inert `archify-developer-guide-data` script outside the canonical SVG. Its body is
+a JSON array of string chunks; joining those strings yields the node-indexed
+presentation payload. The artifact checker requires exactly one such script,
+valid chunk and inner JSON, `schemaVersion: 1`, guide node IDs present in the
+canonical SVG, and guide facts whose `sourceRefs` resolve in the verified source
+payload. It also rejects a payload line above 8192 UTF-8 bytes. An Architecture
+without a guide emits neither this script nor a `developerGuide` receipt.
+
+For a standalone Architecture delivery, `developerGuide` in the JSON receipt is:
+
+```json
+{
+  "schemaVersion": 1,
+  "nodeCount": 2,
+  "itemCount": 9,
+  "bytes": 4276,
+  "sha256": "<64 lowercase hex characters>"
+}
+```
+
+`nodeCount` counts guide-owning components and `itemCount` counts their section
+items. `bytes` and `sha256` are recomputed from the exact chunked text inside the
+inert script, including its JSON escaping and chunk representation. The receipt
+does not contain guide prose. Each compiled node guide is separately limited to
+4096 bytes after HTML-safe JSON serialization, and the emitted member script
+text is limited to 65,536 bytes.
+
+An Atlas reports the same optional receipt under each guide-owning member. Its
+bundle metadata contains only that receipt and a node/section inventory; the
+guide body remains once in the owning member document. Delivery and unpacking
+reconstruct the actual member, compare its payload, inventory, item count, byte
+count, and digest, and enforce a 131,072-byte Atlas total by summing the exact
+per-member script-text byte counts. A reference occurrence cannot contribute a
+second body. See [Canonical developer guides](architecture-atlas.md#canonical-developer-guides)
+for navigation and ownership.
+
+These checks establish bounded, internally consistent bytes. They do not prove
+that authored prose correctly describes the source. The repository evidence
+receipt separately proves the pinned location checks described in the
+[authoring contract](authoring-contract.md#architecture-node-developer-guides),
+and neither receipt replaces independent semantic review of each claim.
+
+Guide prose stays outside the canonical SVG. Existing SVG, PNG, JPEG, WebP,
+WebM, Share Card, Route Card, and Reach Card exports continue to operate on the
+graph and do not serialize the guide payload or visible guide document. The
+payload and Viewer implementation are embedded in the HTML, so the guide reads
+under `file://` and local HTTP without loading source JSON or runtime assets.
+Only a user-activated web source link may leave the artifact; `local-only`
+source evidence emits no remote source link or local repository root.
+
+For Atlas navigation changes, static member screenshots do not establish a continuous layer switch. Record the transition in a real browser using video or consecutive frames, with commit timing, visible diagram identity and workbench-boundary measurements. Inspect representative light/dark, delayed, failed, superseded and history-restoration transitions, including resize. Bind this process evidence to the final artifact digest and report its coverage and limitations separately from `visual-check`; a ready callback or simulated DOM test is not visual evidence. Follow the execution environment's browser and URL permissions when collecting it; unavailable required evidence remains incomplete rather than passed.
+
+For developer-guide changes, that continuous browser record must begin on the
+committed graph and cover quick-look selection, guide entry, chapter replacement,
+return, native Back/Forward, a cold deep link, a valid node without a guide, an
+invalid target, reference-to-canonical navigation, resize, reduced motion, and a
+failed or superseded preparation. Record frames plus `archify:guide-ready`,
+`archify:guide-error`, and address events; a final still cannot prove that one
+usable workspace remained throughout.
+Check both standalone Architecture and Atlas when their shared Viewer or the
+outer shell changed. Bind the record to the delivered artifact digest, and keep
+it separate from perceptual review and from the ordinary `visual-check` receipt.
 
 ## Automated browser evidence
 
@@ -67,6 +135,8 @@ the failure reproduces through that seam in a capable environment.
 ## Optional opening
 
 Add `--open` only when the user wants an immediate local preview. It runs after that atomic commit, uses one argument-array OS opener with a five-second bound, and records `open.status`. Keep it off for CI, unattended agents, and non-interactive environments. Failure or unsupported opening does not invalidate delivery; its status proves only whether the local opener invocation succeeded.
+
+For an Atlas desktop handoff, return its HTML link and a PNG preview bound to the final artifact rather than automatically opening an HTML file panel. Honor an explicit opening request and the user's chosen surface; an unspecified opening request uses the browser. This agent handoff rule does not change the CLI's explicit `--open` option. Smaller output is a byte-size result, not proof of faster host-application rendering.
 
 ## Last-Good Live Preview
 
@@ -116,5 +186,10 @@ correction_rounds: 0|1|2
 ```
 
 Derive `browser_evidence` only from the latest artifact-bound `visual-check` receipt. Record any manual browser work separately with its artifact binding, viewport/theme scope, and observations; never use it or `visual_review` to overwrite the automated status.
+
+When a standalone artifact has developer guides, also return its emitted
+`developerGuide` object unchanged. For an Atlas, report the optional object under
+each guide-owning member; do not synthesize a top-level total receipt or an empty
+receipt for members without guides.
 
 Opening, preview status, Share Cards, and other viewer exports are not validation claims.

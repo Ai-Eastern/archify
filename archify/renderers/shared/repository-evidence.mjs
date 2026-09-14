@@ -65,6 +65,31 @@ function sourceLineCount(content) {
   return lines.length - (/(?:\r\n|\n|\r)$/.test(content) ? 1 : 0);
 }
 
+const IDENTIFIER_CONTINUE_RE = /^[\p{ID_Continue}$\u200c\u200d]$/u;
+
+function identifierContinue(character) {
+  return Boolean(character) && IDENTIFIER_CONTINUE_RE.test(character);
+}
+
+function sourceContainsSymbol(content, symbol) {
+  const symbolCharacters = Array.from(symbol);
+  const first = symbolCharacters[0];
+  const last = symbolCharacters.at(-1);
+  let offset = 0;
+  while (offset <= content.length - symbol.length) {
+    const index = content.indexOf(symbol, offset);
+    if (index < 0) return false;
+    const before = Array.from(content.slice(Math.max(0, index - 2), index)).at(-1);
+    const afterIndex = index + symbol.length;
+    const after = Array.from(content.slice(afterIndex, afterIndex + 2))[0];
+    const leftBoundary = !identifierContinue(first) || !identifierContinue(before);
+    const rightBoundary = !identifierContinue(last) || !identifierContinue(after);
+    if (leftBoundary && rightBoundary) return true;
+    offset = index + Math.max(1, symbol.length);
+  }
+  return false;
+}
+
 export function hasRepositoryEvidence(diagramType, diagram) {
   if (diagramType !== 'architecture') return false;
   const components = Array.isArray(diagram?.components) ? diagram.components : [];
@@ -166,6 +191,9 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
     for (const [sourceIndex, authored] of component.sources.entries()) {
       const where = `/components/${componentIndex}/sources/${sourceIndex}/path`;
       const source = {
+        ...(authored.id ? { id: authored.id } : {}),
+        ...(authored.role ? { role: authored.role } : {}),
+        ...(authored.symbol ? { symbol: authored.symbol } : {}),
         path: verifiedSourcePath(authored.path, where),
         ...(authored.line ? { line: authored.line } : {}),
         ...(authored.end_line ? { endLine: authored.end_line } : {}),
@@ -193,7 +221,13 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
           supportedFixes: ['use a file path that exists at the pinned revision'],
         });
       }
-      if (source.line) {
+      if (source.symbol && (CONTROL_CHARACTER_RE.test(source.symbol) || source.symbol !== source.symbol.trim())) {
+        evidenceFailure('repository-evidence/symbol-invalid', `/components/${componentIndex}/sources/${sourceIndex}/symbol must be printable and have no leading or trailing whitespace.`, {
+          subject: { path: `/components/${componentIndex}/sources/${sourceIndex}/symbol`, componentId: component.id },
+          supportedFixes: ['use one printable source symbol or remove the optional symbol'],
+        });
+      }
+      if (source.line || source.symbol) {
         const content = runGit(realRoot, ['show', object]);
         if (content.status !== 0) evidenceFailure('repository-evidence/file-unreadable', `${where} could not be read at revision ${revision}.`, {
           subject: { path: where, componentId: component.id },
@@ -208,6 +242,20 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
             evidence: { sourcePath: source.path, requestedLine, lineCount, revision },
             supportedFixes: ['use a line range that exists at the pinned revision'],
           });
+        }
+        if (source.symbol) {
+          const lines = content.stdout.split(/\r\n|\n|\r/);
+          const selected = source.line
+            ? lines.slice(source.line - 1, source.endLine || source.line).join('\n')
+            : content.stdout;
+          if (!sourceContainsSymbol(selected, source.symbol)) {
+            evidenceFailure('repository-evidence/symbol-missing', `/components/${componentIndex}/sources/${sourceIndex}/symbol was not found in the selected source range at revision ${revision}.`, {
+              subject: { path: `/components/${componentIndex}/sources/${sourceIndex}/symbol`, componentId: component.id },
+              evidence: { sourcePath: source.path, symbol: source.symbol, line: source.line || null, endLine: source.endLine || source.line || null, revision },
+              supportedFixes: ['correct the symbol or select a pinned source range that contains it'],
+            });
+          }
+          source.symbolLocated = true;
         }
       }
       verified.push({ ...source, ...(linkMode === 'web' ? { href: repositorySourceHref(location.provider, location.url, revision, source) } : {}) });

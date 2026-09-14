@@ -32,6 +32,7 @@ function usage() {
 
 Types:
   architecture, workflow, sequence, dataflow, lifecycle
+  deliver also supports atlas (local architecture atlas manifest)
 `;
 }
 
@@ -813,6 +814,28 @@ function sourceEvidenceFromArtifact(artifact) {
   return evidence;
 }
 
+async function developerGuideReceiptFromArtifact(artifact) {
+  const { findHtmlScriptsById, parseDeveloperGuidePayload } = await import('../renderers/shared/utils.mjs');
+  const html = artifact.toString('utf8');
+  const matches = findHtmlScriptsById(html, 'archify-developer-guide-data');
+  if (!matches.length) return null;
+  if (matches.length !== 1) throw new Error('Rendered developer guide payload must appear exactly once.');
+  const match = matches[0];
+  if (String(match.attributes.type || '').trim().toLowerCase() !== 'application/json') {
+    throw new Error('Rendered developer guide payload script must use type="application/json".');
+  }
+  if (!match.closed) throw new Error('Rendered developer guide payload script is not closed.');
+  const encoded = match.content;
+  const parsed = parseDeveloperGuidePayload(encoded);
+  return {
+    schemaVersion: 1,
+    nodeCount: parsed.nodeCount,
+    itemCount: parsed.itemCount,
+    bytes: parsed.bytes,
+    sha256: createHash('sha256').update(encoded).digest('hex'),
+  };
+}
+
 function engineeringProfileFromArtifact(artifact) {
   const match = artifact.toString('utf8').match(/<svg[^>]*\sdata-engineering-profile="([^"]+)"/);
   return match ? match[1] : null;
@@ -836,6 +859,27 @@ async function commandDeliver(args) {
     code: 'cli/usage',
     supportedFixes: ['use: archify deliver <type> <input.json> [output.html] [options]'],
   });
+  if (type === 'atlas') {
+    try {
+      const { deliverAtlas } = await import('../renderers/shared/atlas-delivery.mjs');
+      const receipt = await deliverAtlas({ input, requestedOutput, quality: qualityArgs.quality, repoRoot: repoArgs.repoRoot });
+      if (open) {
+        try {
+          const { openArtifact } = await import('./open-artifact.mjs');
+          receipt.open = openArtifact(receipt.output);
+        } catch {
+          receipt.open = { requested: true, status: 'unsupported', target: receipt.output, method: null };
+        }
+        if (receipt.open.status !== 'opened') console.error(`Could not open the verified artifact (${receipt.open.status}). Open it manually: ${receipt.output}`);
+      }
+      console.log(json ? JSON.stringify(receipt, null, 2) : `delivered atlas ${receipt.output}`);
+    } catch (error) {
+      reportDeliveryFailure({ json, type, input: path.resolve(input), output: path.resolve(requestedOutput || input.replace(/\.[^.]+$/, '') + '.html'),
+        stage: error.atlasStage || 'input', error: error.message,
+        diagnostics: error.archifyDiagnostics || [diagnostic({ code: 'atlas/delivery', message: error.message })] });
+    }
+    return;
+  }
   assertEvidenceType(type, repoArgs.repoRoot);
   const renderer = rendererPath(type);
   const { resolveOutputPath } = await import('../renderers/shared/output-path.mjs');
@@ -1071,6 +1115,27 @@ async function commandDeliver(args) {
       });
       return;
     }
+    let developerGuide;
+    try {
+      developerGuide = await developerGuideReceiptFromArtifact(artifact);
+    } catch (error) {
+      const message = `Could not read the developer guide receipt: ${error.message}`;
+      reportDeliveryFailure({
+        json,
+        stage: 'receipt',
+        type,
+        input: inputPath,
+        output: outputPath,
+        error: message,
+        diagnostics: [diagnostic({
+          code: 'delivery/developer-guide-receipt-invalid',
+          message,
+          subject: { output: outputPath },
+          evidence: { reason: error.message },
+        })],
+      });
+      return;
+    }
     const engineeringProfile = engineeringProfileFromArtifact(artifact);
     const receipt = {
       schemaVersion: 1,
@@ -1105,6 +1170,7 @@ async function commandDeliver(args) {
           ...(sourceEvidence.repository.linkMode ? { linkMode: sourceEvidence.repository.linkMode } : {}),
         },
       } : {}),
+      ...(developerGuide ? { developerGuide } : {}),
     };
 
     try {
@@ -1344,6 +1410,7 @@ async function commandDoctor() {
     path.join(skillRoot, 'references', 'authoring-contract.md'),
     path.join(skillRoot, 'references', 'viewer-runtime.md'),
     path.join(skillRoot, 'references', 'delivery-contract.md'),
+    path.join(skillRoot, 'references', 'architecture-atlas.md'),
   ];
   const authoringReferencesMissing = authoringReferences.filter((file) => !fs.existsSync(file)).length;
   checks.push({

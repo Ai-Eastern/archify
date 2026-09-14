@@ -1,9 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyTemplate, renderCards, esc } from './utils.mjs';
+import { createHash } from 'node:crypto';
+import {
+  applyTemplate,
+  DEVELOPER_GUIDE_MEMBER_BYTES,
+  DEVELOPER_GUIDE_NODE_BYTES,
+  findDeveloperGuideBudgetContributor,
+  renderCards,
+  esc,
+  serializeChunkedScriptJson,
+  serializeScriptJson,
+} from './utils.mjs';
 import { validateSchema } from './validator.mjs';
 import { verifyRepositoryEvidence } from './repository-evidence.mjs';
-import { installRendererDiagnosticBoundary, throwDiagnosticProblems } from './diagnostics.mjs';
+import { installRendererDiagnosticBoundary, throwDiagnosticError, throwDiagnosticProblems } from './diagnostics.mjs';
 import { validateEngineeringProfile } from './engineering-profiles.mjs';
 import { resolveOutputPath } from './output-path.mjs';
 import { prepareDiagramBrandMarks } from './brand-marks.mjs';
@@ -12,6 +22,180 @@ import { resolveLocale, translateMessage } from './i18n.mjs';
 installRendererDiagnosticBoundary();
 
 const outputPathGuards = new Map();
+const GUIDE_DIRECTIONS = {
+  provided: new Set(['export', 'registration']),
+  required: new Set(['callsite', 'registration']),
+  observed: new Set(['callsite', 'registration']),
+};
+
+function guideDiagnostic(code, message, component, path, evidence, supportedFixes) {
+  return {
+    code: `developer-guide/${code}`,
+    severity: 'error',
+    message,
+    subject: { diagramType: 'architecture', componentId: component.id, path },
+    evidence,
+    supportedFixes,
+  };
+}
+
+function compiledGuide(guide) {
+  return {
+    implementationScope: guide.implementation_scope,
+    summary: { text: guide.summary.text, sourceRefs: [...guide.summary.source_refs] },
+    sections: guide.sections.map((section) => ({
+      kind: section.kind,
+      items: section.items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        ...(item.code !== undefined ? { code: item.code } : {}),
+        ...(item.direction !== undefined ? { direction: item.direction } : {}),
+        text: item.text,
+        sourceRefs: [...item.source_refs],
+      })),
+    })),
+  };
+}
+
+export function compileDeveloperGuides(diagramType, diagram) {
+  if (diagramType !== 'architecture') return null;
+  const components = Array.isArray(diagram?.components) ? diagram.components : [];
+  const withGuide = components.filter((component) => component?.developer_guide);
+  const diagnostics = [];
+  const nodes = Object.create(null);
+  let itemCount = 0;
+  const sourceOwners = new Map();
+  const sourceMaps = new Map();
+  const componentIds = new Set();
+
+  for (const [componentIndex, component] of components.entries()) {
+    if (componentIds.has(component.id)) {
+      diagnostics.push(guideDiagnostic('duplicate-component-id', `Component id ${JSON.stringify(component.id)} is duplicated and cannot index developer guide data safely.`, component, `/components/${componentIndex}/id`, { componentId: component.id }, ['give every architecture component a unique id']));
+    }
+    componentIds.add(component.id);
+    const sourceById = new Map();
+    for (const [sourceIndex, source] of (component?.sources || []).entries()) {
+      if (!source?.id) continue;
+      if (sourceById.has(source.id)) {
+        diagnostics.push(guideDiagnostic('duplicate-source-id', `Source id ${JSON.stringify(source.id)} is duplicated in component ${component.id}.`, component, `/components/${componentIndex}/sources/${sourceIndex}/id`, { sourceId: source.id }, ['give every source in this component a unique id']));
+      } else sourceById.set(source.id, source);
+      const owners = sourceOwners.get(source.id) || new Set();
+      owners.add(component.id);
+      sourceOwners.set(source.id, owners);
+    }
+    sourceMaps.set(component, sourceById);
+  }
+
+  if (!withGuide.length) {
+    if (diagnostics.length) throwDiagnosticError(`Developer guide validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
+    return null;
+  }
+
+  if (!diagram.meta?.repository) {
+    diagnostics.push(guideDiagnostic('repository-required', 'Developer guides require /meta/repository pinned to one source revision.', withGuide[0], '/meta/repository', {}, ['add pinned repository metadata or remove developer_guide']));
+  }
+
+  for (const [componentIndex, component] of components.entries()) {
+    const guide = component?.developer_guide;
+    if (!guide) continue;
+    const componentPath = `/components/${componentIndex}`;
+    const sources = Array.isArray(component.sources) ? component.sources : [];
+    const sourceById = sourceMaps.get(component);
+
+    const sectionKinds = new Set();
+    const itemIds = new Set();
+    function checkRefs(refs, path, direction) {
+      const seen = new Set();
+      const resolved = [];
+      let referencesValid = true;
+      refs.forEach((sourceId, refIndex) => {
+        if (seen.has(sourceId)) {
+          referencesValid = false;
+          diagnostics.push(guideDiagnostic('duplicate-source-ref', `Source ref ${JSON.stringify(sourceId)} is repeated.`, component, `${path}/${refIndex}`, { sourceId }, ['keep each source ref once per guide item']));
+          return;
+        }
+        seen.add(sourceId);
+        const source = sourceById.get(sourceId);
+        if (!source) {
+          referencesValid = false;
+          const otherOwners = [...(sourceOwners.get(sourceId) || [])].filter((owner) => owner !== component.id);
+          diagnostics.push(guideDiagnostic(
+            otherOwners.length ? 'cross-node-source-ref' : 'unknown-source-ref',
+            otherOwners.length
+              ? `Source ref ${JSON.stringify(sourceId)} belongs to another component and cannot support ${component.id}.`
+              : `Source ref ${JSON.stringify(sourceId)} does not resolve inside component ${component.id}.`,
+            component,
+            `${path}/${refIndex}`,
+            { sourceId, available: [...sourceById.keys()], ...(otherOwners.length ? { otherOwners } : {}) },
+            ['reference a source id declared on the same component'],
+          ));
+          return;
+        }
+        if (!source.role) {
+          referencesValid = false;
+          diagnostics.push(guideDiagnostic('source-role-required', `Referenced source ${JSON.stringify(sourceId)} requires a role.`, component, `${componentPath}/sources/${sources.indexOf(source)}/role`, { sourceId }, ['add the source role required by the guide fact']));
+          return;
+        }
+        resolved.push({ id: sourceId, role: source.role });
+      });
+      if (!direction || !referencesValid) return;
+      if (direction === 'bidirectional') {
+        const supported = resolved.some((provided) => (
+          GUIDE_DIRECTIONS.provided.has(provided.role)
+          && resolved.some((required) => (
+            required.id !== provided.id && GUIDE_DIRECTIONS.required.has(required.role)
+          ))
+        ));
+        if (!supported) diagnostics.push(guideDiagnostic('direction-evidence', 'A bidirectional interface requires distinct provided and required/observed source evidence.', component, path.replace(/\/source_refs$/, '/direction'), { direction, roles: resolved.map((source) => source.role) }, ['reference one export or registration source and one distinct callsite or registration source']));
+      } else if (!resolved.some((source) => GUIDE_DIRECTIONS[direction]?.has(source.role))) {
+        diagnostics.push(guideDiagnostic('direction-evidence', `Interface direction ${JSON.stringify(direction)} is not supported by its source roles.`, component, path.replace(/\/source_refs$/, '/direction'), { direction, roles: resolved.map((source) => source.role) }, [direction === 'provided' ? 'reference an export or registration source' : 'reference a callsite or registration source']));
+      }
+    }
+
+    checkRefs(guide.summary.source_refs, `${componentPath}/developer_guide/summary/source_refs`);
+    guide.sections.forEach((section, sectionIndex) => {
+      const sectionPath = `${componentPath}/developer_guide/sections/${sectionIndex}`;
+      if (sectionKinds.has(section.kind)) diagnostics.push(guideDiagnostic('duplicate-section', `Section ${JSON.stringify(section.kind)} is duplicated.`, component, `${sectionPath}/kind`, { kind: section.kind }, ['keep at most one section of each fixed kind']));
+      sectionKinds.add(section.kind);
+      section.items.forEach((item, itemIndex) => {
+        itemCount += 1;
+        const itemPath = `${sectionPath}/items/${itemIndex}`;
+        if (itemIds.has(item.id)) diagnostics.push(guideDiagnostic('duplicate-item-id', `Guide item id ${JSON.stringify(item.id)} is duplicated in component ${component.id}.`, component, `${itemPath}/id`, { itemId: item.id }, ['give every guide item in this component a unique id']));
+        itemIds.add(item.id);
+        checkRefs(item.source_refs, `${itemPath}/source_refs`, section.kind === 'interfaces' ? item.direction : null);
+      });
+    });
+
+    const compiled = compiledGuide(guide);
+    const nodeBytes = Buffer.byteLength(serializeScriptJson(compiled));
+    if (nodeBytes > DEVELOPER_GUIDE_NODE_BYTES) diagnostics.push(guideDiagnostic('node-budget', `Developer guide for component ${component.id} is ${nodeBytes} bytes; the limit is ${DEVELOPER_GUIDE_NODE_BYTES}.`, component, `${componentPath}/developer_guide`, { bytes: nodeBytes, limit: DEVELOPER_GUIDE_NODE_BYTES }, ['remove lower-value guide text or items until the safe serialized guide fits']));
+    nodes[component.id] = compiled;
+  }
+
+  const data = { schemaVersion: 1, nodes };
+  const encoded = serializeChunkedScriptJson(data);
+  const bytes = Buffer.byteLength(encoded);
+  if (bytes > DEVELOPER_GUIDE_MEMBER_BYTES) {
+    const contributor = findDeveloperGuideBudgetContributor(components, nodes, {
+      limit: DEVELOPER_GUIDE_MEMBER_BYTES,
+    });
+    const component = contributor?.component || withGuide.at(-1);
+    const componentIndex = contributor?.componentIndex ?? components.indexOf(component);
+    diagnostics.push(guideDiagnostic('member-budget', `Architecture developer guide payload is ${bytes} bytes; the limit is ${DEVELOPER_GUIDE_MEMBER_BYTES}.`, component, `/components/${componentIndex}/developer_guide`, { bytes, limit: DEVELOPER_GUIDE_MEMBER_BYTES }, ['reduce the member developer guides until the emitted payload fits']));
+  }
+  if (diagnostics.length) throwDiagnosticError(`Developer guide validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
+  return {
+    data,
+    encoded,
+    receipt: {
+      schemaVersion: 1,
+      nodeCount: withGuide.length,
+      itemCount,
+      bytes,
+      sha256: createHash('sha256').update(encoded).digest('hex'),
+    },
+  };
+}
 
 // Common CLI head: node render-<type>.mjs [input.json] [output.html]
 // Keep this synchronous because callers also use it to establish the guarded
@@ -24,6 +208,7 @@ export function loadDiagram({ rendererDir, diagramType, defaultExample, argv = p
   validateGuidedViews(diagramType, diagram);
   validateRelationshipIds(diagramType, diagram);
   validateEngineeringProfile(diagramType, diagram);
+  const developerGuide = compileDeveloperGuides(diagramType, diagram);
   const sourceEvidence = verifyRepositoryEvidence(diagramType, diagram, process.env.ARCHIFY_REPO_ROOT);
   const template = fs.readFileSync(path.join(skillRoot, 'assets/template.html'), 'utf8');
   const outputRequest = {
@@ -35,7 +220,7 @@ export function loadDiagram({ rendererDir, diagramType, defaultExample, argv = p
   };
   const { outputPath: outPath } = resolveOutputPath(outputRequest);
   outputPathGuards.set(outPath, outputRequest);
-  return { diagram, template, outPath, sourceEvidence };
+  return { diagram, template, outPath, sourceEvidence, developerGuide };
 }
 
 // Brand URL capture is the only asynchronous authoring step. Typed renderers
@@ -50,7 +235,7 @@ export async function loadDiagramWithBrandMarks(options) {
 const START_TYPES = new Set(['architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle']);
 
 // Common CLI tail: fill the template and write the standalone HTML file.
-export function writeDiagram({ outPath, template, diagramType, meta, svg, cards, sourceEvidence = null }) {
+export function writeDiagram({ outPath, template, diagramType, meta, svg, cards, sourceEvidence = null, developerGuide = null }) {
   if (!START_TYPES.has(diagramType)) throw new Error(`writeDiagram: unknown diagram type ${JSON.stringify(diagramType)}`);
   const outputGuard = outputPathGuards.get(outPath);
   if (outputGuard) resolveOutputPath(outputGuard);
@@ -64,6 +249,7 @@ export function writeDiagram({ outPath, template, diagramType, meta, svg, cards,
     visualPreset: meta.visual_preset || 'classic',
     guidedViews: meta.views || [],
     sourceEvidence,
+    developerGuide,
   }));
   outputPathGuards.delete(outPath);
   console.log(outPath);
@@ -146,13 +332,13 @@ export function validateGuidedViews(diagramType, diagram) {
 }
 
 // Accessible name for the generated diagram SVG.
-export function svgRootAttrs(meta) {
+export function svgRootAttrs(meta, { profileIsAuthoritative = false } = {}) {
   const animation = meta.animation === 'trace' ? ' data-animation="trace"' : '';
   const preset = ` data-preset="${esc(meta.visual_preset || 'classic')}"`;
   const engineeringProfile = meta.engineering_profile
     ? ` data-engineering-profile="${esc(meta.engineering_profile)}"`
     : '';
-  const requestedProfile = process.env.ARCHIFY_QUALITY_PROFILE || meta.quality_profile;
+  const requestedProfile = profileIsAuthoritative ? meta.quality_profile : process.env.ARCHIFY_QUALITY_PROFILE || meta.quality_profile;
   const qualityProfile = requestedProfile === 'showcase' ? 'showcase' : 'standard';
   const advisory = requestedProfile ? '' : ' data-quality-gates="advisory"';
   return `role="img" lang="${esc(resolveLocale(meta.locale))}" aria-labelledby="archify-diagram-title archify-diagram-description"${animation}${preset}${engineeringProfile} data-quality-profile="${esc(qualityProfile)}"${advisory}`;

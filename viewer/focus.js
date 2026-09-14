@@ -3,6 +3,1093 @@
        Renderer IDs become deep-linkable semantic hooks without turning the
        standalone artifact into a canvas editor.
        ============================================================ */
+    function fallbackCopy(value) {
+      var field = document.createElement('textarea');
+      field.value = value;
+      field.setAttribute('readonly', '');
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      var copied = false;
+      try { copied = document.execCommand('copy'); } catch (_) {}
+      field.remove();
+      return copied;
+    }
+
+    Archify.developerGuide = (function () {
+      var html = document.documentElement;
+      var payload = readPayload();
+      var diagram = document.querySelector('.diagram-container');
+      var guided = document.querySelector('.guided-views');
+      var cards = document.querySelector('.cards');
+      var chip = document.getElementById('focus-chip');
+      var detail = document.getElementById('focus-detail');
+      var quicklook = null;
+      var guideRoot = null;
+      var guideContext = null;
+      var guideActions = null;
+      var guideBody = null;
+      var guideTitle = null;
+      var guideSummary = null;
+      var guideScope = null;
+      var guideToc = null;
+      var guideSections = null;
+      var guideFeedback = null;
+      var guideCopy = null;
+      var guideRelations = null;
+      var guideSourcesAction = null;
+      var currentSurface = 'graph';
+      var currentNodeId = null;
+      var currentSection = null;
+      var graphState = null;
+      var graphScrollY = 0;
+      var chipOrigin = null;
+      var surfaceRevision = 0;
+      var surfaceReady = Promise.resolve(true);
+      var pendingOpen = null;
+      var pendingGraphInformation = null;
+      var standaloneSaveFrame = null;
+      var standaloneSyncRevision = 0;
+      var connected = false;
+      var sectionKinds = ['flow', 'interfaces', 'state', 'constraints', 'change_points'];
+
+      function readPayload() {
+        var data = document.getElementById('archify-developer-guide-data');
+        if (!data) return null;
+        try {
+          var chunks = JSON.parse(data.textContent || 'null');
+          var parsed = Array.isArray(chunks) ? JSON.parse(chunks.join('')) : chunks;
+          if (!parsed || parsed.schemaVersion !== 1 || !parsed.nodes ||
+              typeof parsed.nodes !== 'object' || Array.isArray(parsed.nodes)) return null;
+          return parsed;
+        } catch (_) { return null; }
+      }
+
+      function own(object, key) {
+        return Boolean(object && Object.prototype.hasOwnProperty.call(object, key));
+      }
+
+      function node(id) {
+        if (typeof id !== 'string' || !payload || !own(payload.nodes, id)) return null;
+        var value = payload.nodes[id];
+        return value && typeof value === 'object' ? value : null;
+      }
+
+      function guideNodes() {
+        return payload ? Object.keys(payload.nodes) : [];
+      }
+
+      function textElement(name, className, parent, value) {
+        var element = document.createElement(name);
+        if (className) element.className = className;
+        if (value != null) element.textContent = String(value);
+        if (parent) parent.appendChild(element);
+        return element;
+      }
+
+      function labelFor(id) {
+        var match = null;
+        Array.prototype.some.call(document.querySelectorAll('[data-node-id]'), function (candidate) {
+          if (candidate.getAttribute('data-node-id') !== id) return false;
+          match = candidate;
+          return true;
+        });
+        if (!match) return id || viewerText('viewer.developerGuide.overview');
+        return match.getAttribute('data-node-label') ||
+          (match.getAttribute('aria-label') || id).replace(/^Focus\s+/, '');
+      }
+
+      function diagramHasNode(id) {
+        var found = false;
+        Array.prototype.some.call(document.querySelectorAll('[data-node-id]'), function (candidate) {
+          if (candidate.getAttribute('data-node-id') !== id) return false;
+          found = true;
+          return true;
+        });
+        return found;
+      }
+
+      function sectionLabel(kind) {
+        var suffix = kind === 'change_points' ? 'changePoints' : kind;
+        return viewerText('viewer.developerGuide.section.' + suffix);
+      }
+
+      function scopeLabel(scope) {
+        return viewerText('viewer.developerGuide.implementationScope.' + scope);
+      }
+
+      function directionLabel(direction) {
+        return viewerText('viewer.developerGuide.direction.' + direction);
+      }
+
+      function sourceFor(id, reference) {
+        var sources = Archify.sourceEvidence && typeof Archify.sourceEvidence.node === 'function'
+          ? Archify.sourceEvidence.node(id) : [];
+        for (var index = 0; index < sources.length; index += 1) {
+          if (sources[index] && sources[index].id === reference) return sources[index];
+        }
+        return null;
+      }
+
+      function sourceLocation(source) {
+        if (!source) return '';
+        var range = source.line
+          ? ':L' + source.line + (source.endLine && source.endLine !== source.line ? '-L' + source.endLine : '')
+          : '';
+        var location = (source.path || source.label || '') + range;
+        return source.symbol ? location + ' · ' + source.symbol : location;
+      }
+
+      function activateSource(id, reference) {
+        var sourceTab = document.getElementById('atlas-tab-sources');
+        if (sourceTab && typeof sourceTab.click === 'function') sourceTab.click();
+        var target = null;
+        Array.prototype.some.call(document.querySelectorAll('[data-source-id]'), function (candidate) {
+          if (candidate.getAttribute('data-source-id') !== reference) return false;
+          target = candidate;
+          return true;
+        });
+        if (!target) return false;
+        if (!target.hasAttribute('tabindex') && target.tagName !== 'A') target.tabIndex = -1;
+        target.scrollIntoView({ block: 'nearest' });
+        try { target.focus({ preventScroll: true }); }
+        catch (_) { try { target.focus(); } catch (_) {} }
+        return true;
+      }
+
+      function appendSourceAction(parent, id, reference) {
+        var source = sourceFor(id, reference);
+        if (!source) return null;
+        var roleLabel = source.role
+          ? viewerText('viewer.developerGuide.sourceRole.' + source.role)
+          : viewerText('viewer.developerGuide.evidenceLink');
+        var label = roleLabel + ' · ' + sourceLocation(source);
+        var action;
+        if (source.href) {
+          action = textElement('a', 'node-guide-source', parent, label);
+          action.href = source.href;
+          action.target = '_blank';
+          action.rel = 'noopener noreferrer';
+          action.referrerPolicy = 'no-referrer';
+        } else {
+          action = textElement('button', 'node-guide-source', parent, label);
+          action.type = 'button';
+          action.addEventListener('click', function () { activateSource(id, reference); });
+        }
+        action.setAttribute('data-guide-source-ref', reference);
+        return action;
+      }
+
+      function installStyles() {
+        if (document.querySelector('style[data-developer-guide-style]')) return;
+        var style = document.createElement('style');
+        style.setAttribute('data-developer-guide-style', '');
+        style.textContent = [
+          '.node-quicklook[hidden],.node-quicklook-interfaces[hidden],.node-developer-guide[hidden],.node-guide-body[hidden],.node-guide-actions button[hidden]{display:none!important}',
+          '.node-quicklook{display:grid;gap:.55rem;margin-top:.65rem;padding-top:.65rem;border-top:1px solid var(--toolbar-border);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+          '.node-quicklook-heading,.node-quicklook-label{margin:0;color:var(--text-muted);font-size:.58rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}',
+          '.node-quicklook-scope{display:grid;gap:.18rem;margin:0}.node-quicklook-scope strong{color:var(--text);font-size:.7rem;line-height:1.45}',
+          '.node-quicklook-interfaces{display:grid;gap:.42rem}.node-quicklook-list{display:grid;gap:.42rem;margin:0;padding:0;list-style:none}',
+          '.node-quicklook-interface{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.12rem .42rem;padding-top:.42rem;border-top:1px solid color-mix(in srgb,var(--toolbar-border) 72%,transparent)}',
+          '.node-quicklook-interface:first-child{padding-top:0;border-top:0}.node-quicklook-direction{grid-row:1/3;align-self:start;padding:.12rem .3rem;border:1px solid var(--toolbar-border);border-radius:999px;color:var(--frontend-stroke);font-size:.52rem;line-height:1.35}',
+          '.node-quicklook-interface strong{min-width:0;color:var(--text);font-size:.68rem;line-height:1.4;overflow-wrap:anywhere}.node-quicklook-interface small{grid-column:2;color:var(--text-muted);font-size:.62rem;line-height:1.5;overflow-wrap:anywhere}',
+          '.node-quicklook-interface .node-guide-source{grid-column:2;justify-self:start}',
+          '.node-guide-open,.node-guide-actions button,.node-guide-source{border:0;background:none;color:color-mix(in srgb,var(--frontend-stroke) 80%,var(--text));font:inherit;cursor:pointer;text-align:left}',
+          '.node-guide-source{user-select:text;-webkit-user-select:text}',
+          '.node-guide-open{justify-self:start;min-height:2rem;padding:.25rem 0;font-size:.68rem;font-weight:700}.node-guide-feedback{min-height:0;margin:0;color:var(--security-stroke);font-size:.6rem;line-height:1.45}',
+          'html[data-reader-surface="guide"] .guided-views,html[data-reader-surface="guide"] .diagram-container,html[data-reader-surface="guide"] .cards{display:none!important}',
+          '.node-developer-guide{box-sizing:border-box;width:100%;max-width:var(--archify-reader-width,1440px);margin:0 auto;padding:1.5rem 0 3rem;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+          'html[data-atlas-layout="rail"] .node-developer-guide{margin-left:var(--atlas-reader-offset);margin-right:0}',
+          '.node-guide-workspace{display:grid;grid-template-columns:minmax(0,22rem) minmax(0,1fr);gap:clamp(1.5rem,4vw,4rem);align-items:start;min-width:0}',
+          '.node-guide-context:empty{display:none}.node-guide-context:empty+.node-guide-document{grid-column:1/-1}',
+          '.node-guide-context>.focus-chip{position:sticky;top:1rem;left:auto;width:100%;max-width:none;max-height:none;overflow:visible;transform:none!important}',
+          '.node-guide-context>.focus-chip .relationship-lens-list{display:none!important}',
+          '.node-guide-document{width:min(100%,70rem);min-width:0;margin:0 auto}',
+          '.node-guide-actions{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center;margin-bottom:1.3rem}.node-guide-actions button{min-height:2.25rem;padding:.35rem 0;font-size:.78rem;font-weight:650}',
+          '.node-guide-lead{max-width:48rem;padding-bottom:1.35rem;border-bottom:1px solid var(--toolbar-border)}',
+          '.node-guide-eyebrow{margin:0 0 .35rem;color:color-mix(in srgb,var(--frontend-stroke) 80%,var(--text));font-size:.68rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}',
+          '.node-guide-title{margin:0;color:var(--text);font-size:clamp(1.5rem,3vw,2.4rem);line-height:1.15;letter-spacing:-.025em;overflow-wrap:anywhere}',
+          '.node-guide-summary{margin:.9rem 0 0;color:var(--text-muted);font-size:1rem;line-height:1.72;overflow-wrap:anywhere}',
+          '.node-guide-scope{display:flex;flex-wrap:wrap;gap:.3rem .65rem;align-items:baseline;margin:.85rem 0 0;color:var(--text-muted);font-size:.75rem}.node-guide-scope strong{color:var(--text)}',
+          '.node-guide-body{display:grid;grid-template-columns:minmax(10rem,13rem) minmax(0,46rem);gap:clamp(1.5rem,4vw,4rem);align-items:start;margin-top:1.5rem}',
+          '.node-guide-toc{position:sticky;top:1rem}.node-guide-toc ol{display:grid;gap:.25rem;margin:0;padding:0;list-style:none}.node-guide-toc a{display:block;padding:.42rem .55rem;border-left:2px solid transparent;color:var(--text-muted);font-size:.76rem;line-height:1.45;text-decoration:none}.node-guide-toc a[aria-current="location"]{border-left-color:var(--frontend-stroke);color:var(--text);font-weight:700}',
+          '.node-guide-sections{display:grid;gap:2.5rem;min-width:0}.node-guide-section{scroll-margin-top:1rem}.node-guide-section>h2{display:flex;align-items:center;gap:.75rem;margin:0 0 1rem;color:color-mix(in srgb,var(--frontend-stroke) 82%,var(--text));font-size:.72rem;font-weight:750;line-height:1.4;letter-spacing:.1em}.node-guide-section>h2::after{content:"";flex:1;height:1px;background:var(--toolbar-border)}',
+          '.node-guide-items{display:grid;gap:1.25rem;margin:0;padding:0;list-style:none}.node-guide-item{display:grid;gap:.38rem;min-width:0;padding-top:1.05rem;border-top:1px solid var(--toolbar-border)}',
+          '.node-guide-item:first-child{padding-top:0;border-top:0}.node-guide-item h3{margin:0;color:var(--text);font-size:.98rem;font-weight:680;line-height:1.45;overflow-wrap:anywhere}.node-guide-item p{margin:0;color:var(--text-muted);font-size:.84rem;line-height:1.68;overflow-wrap:anywhere}',
+          '.node-guide-item code{display:block;max-width:100%;padding:.5rem .6rem;border:1px solid var(--toolbar-border);border-radius:.4rem;background:color-mix(in srgb,var(--panel) 72%,transparent);color:var(--text);font:.72rem/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}',
+          '.node-guide-direction{justify-self:start;padding:.15rem .38rem;border:1px solid var(--toolbar-border);border-radius:999px;color:color-mix(in srgb,var(--frontend-stroke) 80%,var(--text));font-size:.62rem;line-height:1.35}',
+          '.node-guide-sources{display:flex;flex-wrap:wrap;gap:.35rem .75rem;margin-top:.18rem}.node-guide-source{min-height:1.8rem;padding:.15rem 0;font-size:.69rem;line-height:1.45;text-decoration:none;overflow-wrap:anywhere}',
+          '.node-guide-status{margin:.75rem 0 0;color:var(--security-stroke);font-size:.76rem;line-height:1.55}',
+          '.node-guide-open:focus-visible,.node-guide-actions button:focus-visible,.node-guide-source:focus-visible,.node-guide-toc a:focus-visible,.node-guide-title:focus-visible,.node-guide-section>h2:focus-visible{outline:2px solid var(--frontend-stroke);outline-offset:3px}',
+          '@media(max-width:1023px){.node-developer-guide{padding-top:1rem}.node-guide-workspace,.node-guide-body{grid-template-columns:minmax(0,1fr)}.node-guide-context>.focus-chip{position:static}.node-guide-toc{position:static}.node-guide-toc ol{display:flex;flex-wrap:wrap;gap:.3rem}.node-guide-toc a{border-left:0;border-bottom:2px solid transparent}.node-guide-toc a[aria-current="location"]{border-bottom-color:var(--frontend-stroke)}}',
+          '@media(max-width:720px){.node-developer-guide{padding:1rem 0 2rem}.node-guide-actions button,.node-guide-open,.node-guide-source,.node-guide-toc a{min-width:44px;min-height:44px}.node-guide-source{display:inline-flex;align-items:center}.node-guide-title{font-size:1.55rem}.node-guide-summary{font-size:.92rem}.node-guide-sections{gap:2rem}}',
+          '@media print{.node-developer-guide{display:none!important}}'
+        ].join('');
+        document.head.appendChild(style);
+      }
+
+      function ensureQuicklook() {
+        if (quicklook || !detail || !payload || !guideNodes().length) return quicklook;
+        installStyles();
+        quicklook = textElement('section', 'node-quicklook', null);
+        quicklook.id = 'focus-developer-quicklook';
+        quicklook.hidden = true;
+        quicklook.setAttribute('aria-labelledby', 'focus-developer-quicklook-heading');
+        var heading = textElement('h3', 'node-quicklook-heading', quicklook, viewerText('viewer.developerGuide.overview'));
+        heading.id = 'focus-developer-quicklook-heading';
+        var scope = textElement('p', 'node-quicklook-scope', quicklook);
+        textElement('span', 'node-quicklook-label', scope, viewerText('viewer.developerGuide.implementationScope'));
+        var scopeValue = textElement('strong', '', scope);
+        scopeValue.id = 'focus-implementation-scope';
+        var interfaces = textElement('div', 'node-quicklook-interfaces', quicklook);
+        interfaces.id = 'focus-interface-summary';
+        var interfacesHeading = textElement('p', 'node-quicklook-label', interfaces, sectionLabel('interfaces'));
+        interfacesHeading.id = 'focus-interface-heading';
+        var list = textElement('ul', 'node-quicklook-list', interfaces);
+        list.id = 'focus-interface-list';
+        var openButton = textElement('button', 'node-guide-open', quicklook, viewerText('viewer.developerGuide.open'));
+        openButton.id = 'btn-open-developer-guide';
+        openButton.type = 'button';
+        openButton.addEventListener('click', function () {
+          var active = Archify.focus && Archify.focus.active();
+          if (typeof active === 'string') open(active);
+        });
+        var feedback = textElement('p', 'node-guide-feedback', quicklook);
+        feedback.id = 'focus-guide-feedback';
+        feedback.setAttribute('role', 'status');
+        detail.after(quicklook);
+        return quicklook;
+      }
+
+      function clearQuicklook() {
+        if (!quicklook) return;
+        quicklook.hidden = true;
+        var scope = document.getElementById('focus-implementation-scope');
+        var list = document.getElementById('focus-interface-list');
+        var interfaces = document.getElementById('focus-interface-summary');
+        var feedback = document.getElementById('focus-guide-feedback');
+        if (scope) scope.textContent = '';
+        if (list) list.textContent = '';
+        if (interfaces) interfaces.hidden = true;
+        if (feedback) feedback.textContent = '';
+      }
+
+      function renderQuicklook(id) {
+        var guide = node(id);
+        var root = ensureQuicklook();
+        if (!root || !guide) {
+          clearQuicklook();
+          return false;
+        }
+        var scope = document.getElementById('focus-implementation-scope');
+        var list = document.getElementById('focus-interface-list');
+        var interfaces = document.getElementById('focus-interface-summary');
+        var feedback = document.getElementById('focus-guide-feedback');
+        scope.textContent = scopeLabel(guide.implementationScope);
+        list.textContent = '';
+        var interfaceSection = (guide.sections || []).filter(function (section) {
+          return section && section.kind === 'interfaces' && Array.isArray(section.items);
+        })[0];
+        var items = interfaceSection ? interfaceSection.items.slice(0, 3) : [];
+        items.forEach(function (item) {
+          var row = textElement('li', 'node-quicklook-interface', list);
+          textElement('span', 'node-quicklook-direction', row, directionLabel(item.direction));
+          textElement('strong', '', row, item.title);
+          textElement('small', '', row, item.text);
+          if (Array.isArray(item.sourceRefs) && item.sourceRefs.length) appendSourceAction(row, id, item.sourceRefs[0]);
+        });
+        interfaces.hidden = !items.length;
+        feedback.textContent = '';
+        root.hidden = false;
+        return true;
+      }
+
+      function ensureGuideRoot() {
+        if (guideRoot) return guideRoot;
+        installStyles();
+        var shell = document.querySelector('.container');
+        if (!shell) return null;
+        guideRoot = textElement('main', 'node-developer-guide no-print', null);
+        guideRoot.id = 'node-developer-guide';
+        guideRoot.hidden = true;
+        guideRoot.inert = true;
+        guideRoot.setAttribute('inert', '');
+        guideRoot.setAttribute('aria-hidden', 'true');
+        var workspace = textElement('div', 'node-guide-workspace', guideRoot);
+        guideContext = textElement('aside', 'node-guide-context', workspace);
+        guideContext.id = 'node-guide-context';
+        var guideDocument = textElement('div', 'node-guide-document', workspace);
+        guideActions = textElement('div', 'node-guide-actions', guideDocument);
+        var back = textElement('button', '', guideActions, viewerText('viewer.developerGuide.backToDiagram'));
+        back.id = 'node-guide-back';
+        back.type = 'button';
+        back.addEventListener('click', function () { close({ restoreFocus: true }); });
+        guideCopy = textElement('button', '', guideActions, viewerText('viewer.developerGuide.copyLink'));
+        guideCopy.id = 'node-guide-copy';
+        guideCopy.type = 'button';
+        guideCopy.addEventListener('click', copyLink);
+        guideRelations = textElement('button', '', guideActions, viewerText('viewer.passport.relations'));
+        guideRelations.id = 'node-guide-relations';
+        guideRelations.type = 'button';
+        guideRelations.addEventListener('click', function () { showNodeInformation('relationships'); });
+        guideSourcesAction = textElement('button', '', guideActions, viewerText('viewer.developerGuide.evidenceLink'));
+        guideSourcesAction.id = 'node-guide-sources';
+        guideSourcesAction.type = 'button';
+        guideSourcesAction.addEventListener('click', function () { showNodeInformation('sources'); });
+        var lead = textElement('header', 'node-guide-lead', guideDocument);
+        textElement('p', 'node-guide-eyebrow', lead, viewerText('viewer.developerGuide.overview'));
+        guideTitle = textElement('h2', 'node-guide-title', lead);
+        guideTitle.id = 'node-guide-title';
+        guideTitle.tabIndex = -1;
+        guideSummary = textElement('p', 'node-guide-summary', lead);
+        var scopeRow = textElement('p', 'node-guide-scope', lead);
+        textElement('span', '', scopeRow, viewerText('viewer.developerGuide.implementationScope'));
+        guideScope = textElement('strong', '', scopeRow);
+        guideFeedback = textElement('p', 'node-guide-status', lead);
+        guideFeedback.id = 'node-guide-feedback';
+        guideFeedback.setAttribute('role', 'status');
+        guideBody = textElement('div', 'node-guide-body', guideDocument);
+        guideToc = textElement('nav', 'node-guide-toc', guideBody);
+        guideToc.setAttribute('aria-label', viewerText('viewer.developerGuide.overview'));
+        textElement('ol', '', guideToc).id = 'node-guide-toc';
+        guideSections = textElement('div', 'node-guide-sections', guideBody);
+        guideSections.id = 'node-guide-sections';
+        guideRoot.setAttribute('aria-labelledby', guideTitle.id);
+        shell.after(guideRoot);
+        return guideRoot;
+      }
+
+      function appendSources(parent, id, references) {
+        if (!Array.isArray(references) || !references.length) return;
+        var sources = textElement('div', 'node-guide-sources', parent);
+        references.forEach(function (reference) { appendSourceAction(sources, id, reference); });
+        if (!sources.children.length) sources.remove();
+      }
+
+      function renderItem(parent, id, item, kind) {
+        var article = textElement('article', 'node-guide-item', parent);
+        article.id = 'node-guide-item-' + item.id;
+        textElement('h3', '', article, item.title);
+        if (kind === 'interfaces' && item.direction) {
+          textElement('span', 'node-guide-direction', article, directionLabel(item.direction));
+        }
+        if (kind === 'interfaces' && item.code) textElement('code', '', article, item.code);
+        textElement('p', '', article, item.text);
+        appendSources(article, id, item.sourceRefs);
+      }
+
+      function validSections(guide) {
+        return Array.isArray(guide && guide.sections) ? guide.sections.filter(function (section) {
+          return section && sectionKinds.indexOf(section.kind) !== -1 && Array.isArray(section.items) && section.items.length;
+        }) : [];
+      }
+
+      function guideHash(id, section) {
+        var current = new URLSearchParams(ArchifyAddress.location.hash.replace(/^#/, ''));
+        var next = new URLSearchParams();
+        if (current.get('diagram')) next.set('diagram', current.get('diagram'));
+        next.set('focus', id);
+        next.set('inspect', 'guide');
+        if (section) next.set('section', section);
+        return '#' + next.toString();
+      }
+
+      function graphHash(id) {
+        var current = new URLSearchParams(ArchifyAddress.location.hash.replace(/^#/, ''));
+        var next = new URLSearchParams();
+        if (current.get('diagram')) next.set('diagram', current.get('diagram'));
+        if (id) next.set('focus', id);
+        return '#' + next.toString();
+      }
+
+      function standaloneHistoryState(base, surface, href, nodeId, graphHref, reading) {
+        var state = base && typeof base === 'object' && !Array.isArray(base)
+          ? Object.assign({}, base) : {};
+        state.archifyDeveloperGuide = {
+          surface: surface,
+          href: href,
+          nodeId: nodeId,
+          graphHref: graphHref || null,
+          reading: reading
+        };
+        return state;
+      }
+
+      function storedStandaloneReading(state, href) {
+        var record = state && state.archifyDeveloperGuide;
+        if (!record || (record.surface !== 'graph' && record.surface !== 'guide') ||
+            record.href !== href || !record.reading || record.reading.surface !== record.surface) return null;
+        return record.reading;
+      }
+
+      function replaceStandaloneReading(url) {
+        if (ArchifyAddress.context || pendingOpen) return false;
+        var record = history.state && history.state.archifyDeveloperGuide;
+        if (!record || record.surface !== currentSurface ||
+            (currentSurface === 'guide' && record.nodeId !== currentNodeId)) return false;
+        var href;
+        try { href = new URL(url || location.href, location.href).href; }
+        catch (_) { return false; }
+        var reading = snapshot();
+        var next = standaloneHistoryState(history.state, currentSurface, href,
+          currentSurface === 'guide' ? currentNodeId : reading.nodeId,
+          record.graphHref, reading);
+        history.replaceState(next, '', url || location.href);
+        return true;
+      }
+
+      function scheduleStandaloneReadingSave() {
+        if (ArchifyAddress.context || standaloneSaveFrame !== null) return;
+        standaloneSaveFrame = requestAnimationFrame(function () {
+          standaloneSaveFrame = null;
+          var record = history.state && history.state.archifyDeveloperGuide;
+          if (!record || record.href !== location.href || record.surface !== currentSurface) return;
+          replaceStandaloneReading(location.href);
+        });
+      }
+
+      function updateToc(section) {
+        if (!guideToc) return;
+        Array.prototype.forEach.call(guideToc.querySelectorAll('[data-guide-section]'), function (link) {
+          if (link.getAttribute('data-guide-section') === section) link.setAttribute('aria-current', 'location');
+          else link.removeAttribute('aria-current');
+        });
+      }
+
+      function showSection(section, options) {
+        options = options || {};
+        if (!guideRoot || currentSurface !== 'guide') return false;
+        var target = null;
+        Array.prototype.some.call(guideSections.querySelectorAll('[data-guide-section]'), function (candidate) {
+          if (candidate.getAttribute('data-guide-section') !== section) return false;
+          target = candidate;
+          return true;
+        });
+        if (!target) return false;
+        currentSection = section;
+        updateToc(section);
+        guideRoot.setAttribute('data-guide-section', section);
+        if (options.scroll !== false) target.scrollIntoView({ block: 'start', behavior: 'auto' });
+        if (options.updateUrl !== false && !pendingOpen) {
+          var url = ArchifyAddress.location.pathname + ArchifyAddress.location.search + guideHash(currentNodeId, section);
+          if (ArchifyAddress.context) {
+            ArchifyAddress.replaceState(history.state, '', url);
+            ArchifyAddress.settled();
+          } else replaceStandaloneReading(url);
+        }
+        return true;
+      }
+
+      function renderGuide(id, requestedSection) {
+        var root = ensureGuideRoot();
+        var guide = node(id);
+        if (!root || !guide) return false;
+        var sections = validSections(guide);
+        if (!sections.length) return false;
+        guideTitle.textContent = labelFor(id);
+        guideSummary.textContent = guide.summary && guide.summary.text ? guide.summary.text : '';
+        guideScope.textContent = scopeLabel(guide.implementationScope);
+        guideFeedback.textContent = '';
+        guideCopy.hidden = false;
+        guideRelations.hidden = false;
+        guideSourcesAction.hidden = false;
+        guideBody.hidden = false;
+        var previousSummarySources = guideSummary.parentNode.querySelector('[data-guide-summary-sources]');
+        if (previousSummarySources) previousSummarySources.remove();
+        var list = document.getElementById('node-guide-toc');
+        list.textContent = '';
+        guideSections.textContent = '';
+        sections.forEach(function (section) {
+          var item = textElement('li', '', list);
+          var link = textElement('a', '', item, sectionLabel(section.kind));
+          link.href = guideHash(id, section.kind);
+          link.setAttribute('data-guide-section', section.kind);
+          link.addEventListener('click', function (event) {
+            event.preventDefault();
+            if (showSection(section.kind) && event.detail === 0) {
+              var heading = document.getElementById('node-guide-heading-' + section.kind);
+              if (heading) {
+                try { heading.focus({ preventScroll: true }); }
+                catch (_) { try { heading.focus(); } catch (_) {} }
+              }
+            }
+          });
+          var sectionRoot = textElement('section', 'node-guide-section', guideSections);
+          sectionRoot.id = 'node-guide-section-' + section.kind;
+          sectionRoot.setAttribute('data-guide-section', section.kind);
+          var heading = textElement('h2', '', sectionRoot, sectionLabel(section.kind));
+          heading.id = 'node-guide-heading-' + section.kind;
+          heading.tabIndex = -1;
+          var items = textElement(section.kind === 'flow' ? 'ol' : 'div', 'node-guide-items', sectionRoot);
+          section.items.forEach(function (guideItem) {
+            if (section.kind === 'flow') {
+              var listItem = textElement('li', '', items);
+              renderItem(listItem, id, guideItem, section.kind);
+            } else renderItem(items, id, guideItem, section.kind);
+          });
+        });
+        var summarySources = textElement('div', 'node-guide-sources', guideSummary.parentNode);
+        summarySources.setAttribute('data-guide-summary-sources', '');
+        (guide.summary && Array.isArray(guide.summary.sourceRefs) ? guide.summary.sourceRefs : []).forEach(function (reference) {
+          appendSourceAction(summarySources, id, reference);
+        });
+        if (!summarySources.children.length) summarySources.remove();
+        currentSection = sections.some(function (section) { return section.kind === requestedSection; })
+          ? requestedSection : sections[0].kind;
+        root.setAttribute('data-node-id', id);
+        root.setAttribute('data-guide-state', 'ready');
+        updateToc(currentSection);
+        root.setAttribute('data-guide-section', currentSection);
+        return true;
+      }
+
+      function showNodeInformation(kind) {
+        if (ArchifyAddress.context) {
+          ArchifyAddress.send('guide-return', { information: kind });
+          return;
+        }
+        pendingGraphInformation = kind;
+        close({ restoreFocus: false });
+        if (currentSurface === 'graph') applyGraphInformation();
+      }
+
+      function applyGraphInformation() {
+        var kind = pendingGraphInformation;
+        if (!kind || currentSurface !== 'graph') return false;
+        pendingGraphInformation = null;
+        var tab = document.getElementById('atlas-tab-' + kind);
+        if (tab && typeof tab.click === 'function') {
+          tab.click();
+          var inspector = document.querySelector('.atlas-inspector');
+          if (inspector) inspector.scrollIntoView({ block: 'start' });
+          return true;
+        }
+        if (kind === 'relationships') {
+          var relations = document.getElementById('btn-focus-relations');
+          if (relations && relations.getAttribute('aria-expanded') !== 'true') relations.click();
+          if (chip) chip.scrollIntoView({ block: 'nearest' });
+        } else {
+          var evidence = document.getElementById('focus-evidence');
+          if (evidence && !evidence.hidden) evidence.scrollIntoView({ block: 'nearest' });
+        }
+        return true;
+      }
+
+      function renderError(id, key, state) {
+        var root = ensureGuideRoot();
+        if (!root) return false;
+        guideTitle.textContent = labelFor(id);
+        guideSummary.textContent = viewerText(key || 'viewer.developerGuide.error');
+        guideScope.textContent = '';
+        guideFeedback.textContent = '';
+        guideCopy.hidden = true;
+        guideRelations.hidden = state !== 'empty';
+        guideSourcesAction.hidden = state !== 'empty';
+        guideBody.hidden = true;
+        var summarySources = guideSummary.parentNode.querySelector('[data-guide-summary-sources]');
+        if (summarySources) summarySources.remove();
+        document.getElementById('node-guide-toc').textContent = '';
+        guideSections.textContent = '';
+        guideRoot.setAttribute('data-node-id', id || 'unknown');
+        guideRoot.setAttribute('data-guide-state', state || 'error');
+        guideRoot.removeAttribute('data-guide-section');
+        currentSection = null;
+        return true;
+      }
+
+      function rememberElement(element) {
+        return element ? {
+          element: element,
+          hidden: element.hidden,
+          inert: element.hasAttribute('inert'),
+          ariaHidden: element.getAttribute('aria-hidden')
+        } : null;
+      }
+
+      function hideElement(state) {
+        if (!state) return;
+        state.element.hidden = true;
+        state.element.inert = true;
+        state.element.setAttribute('aria-hidden', 'true');
+      }
+
+      function restoreElement(state) {
+        if (!state) return;
+        state.element.hidden = state.hidden;
+        state.element.inert = state.inert;
+        if (state.ariaHidden == null) state.element.removeAttribute('aria-hidden');
+        else state.element.setAttribute('aria-hidden', state.ariaHidden);
+      }
+
+      function dispatchReady(nodeId, section) {
+        window.dispatchEvent(new CustomEvent('archify:guide-ready', {
+          detail: { nodeId: nodeId, section: section, surface: 'guide' }
+        }));
+      }
+
+      function settled(nodeId, section, emitReady, emitError) {
+        var revision = ++surfaceRevision;
+        return Promise.resolve().then(function () {
+          if (Archify.readerLayout && typeof Archify.readerLayout.schedule === 'function') Archify.readerLayout.schedule();
+          return Archify.readerLayout && typeof Archify.readerLayout.whenStable === 'function'
+            ? Archify.readerLayout.whenStable() : null;
+        }).then(function () {
+          if (revision !== surfaceRevision || currentSurface !== 'guide' || currentNodeId !== nodeId) return;
+          if (emitReady !== false) dispatchReady(nodeId, section);
+          if (ArchifyAddress.context) ArchifyAddress.settled();
+        }).catch(function (error) {
+          if (revision !== surfaceRevision || currentSurface !== 'guide' || currentNodeId !== nodeId) return;
+          if (emitError !== false) {
+            window.dispatchEvent(new CustomEvent('archify:guide-error', {
+              detail: { nodeId: nodeId, message: error && error.message ? error.message : String(error) }
+            }));
+          }
+          throw error;
+        });
+      }
+
+      function activateGuide(id, section, options) {
+        options = options || {};
+        if (!guideRoot) return false;
+        if (currentSurface === 'guide' && currentNodeId === id) {
+          if (section && section !== currentSection) showSection(section, { updateUrl: false, scroll: options.scroll !== false });
+          if (options.forceSettle) surfaceReady = settled(id, currentSection, options.emitReady, options.emitError);
+          return true;
+        }
+        if (currentSurface === 'guide') {
+          currentNodeId = id;
+          currentSection = section;
+          updateToc(currentSection);
+          if (options.scroll !== false) window.scrollTo(0, 0);
+          if (options.focus !== false) guideTitle.focus({ preventScroll: true });
+          surfaceReady = settled(id, currentSection, options.emitReady, options.emitError);
+          return true;
+        }
+        graphScrollY = window.scrollY;
+        graphState = [rememberElement(guided), rememberElement(diagram), rememberElement(cards)];
+        chipOrigin = null;
+        if (chip && diagram && diagram.contains(chip)) {
+          chipOrigin = { parent: chip.parentNode, next: chip.nextSibling };
+          guideContext.appendChild(chip);
+        }
+        graphState.forEach(hideElement);
+        currentSurface = 'guide';
+        currentNodeId = id;
+        html.setAttribute('data-reader-surface', 'guide');
+        guideRoot.hidden = false;
+        guideRoot.inert = false;
+        guideRoot.removeAttribute('inert');
+        guideRoot.removeAttribute('aria-hidden');
+        if (section) currentSection = section;
+        updateToc(currentSection);
+        if (options.scroll !== false) window.scrollTo(0, 0);
+        if (options.focus !== false) guideTitle.focus({ preventScroll: true });
+        surfaceReady = settled(id, currentSection, options.emitReady, options.emitError);
+        return true;
+      }
+
+      function deactivateGuide(options) {
+        options = options || {};
+        if (currentSurface !== 'guide') return false;
+        surfaceRevision += 1;
+        pendingOpen = null;
+        guideRoot.hidden = true;
+        guideRoot.inert = true;
+        guideRoot.setAttribute('inert', '');
+        guideRoot.setAttribute('aria-hidden', 'true');
+        if (chipOrigin && guideContext && guideContext.contains(chip)) {
+          var next = chipOrigin.next && chipOrigin.next.parentNode === chipOrigin.parent ? chipOrigin.next : null;
+          chipOrigin.parent.insertBefore(chip, next);
+        }
+        (graphState || []).forEach(restoreElement);
+        graphState = null;
+        chipOrigin = null;
+        currentSurface = 'graph';
+        currentNodeId = null;
+        currentSection = null;
+        html.setAttribute('data-reader-surface', 'graph');
+        if (Archify.readerLayout && typeof Archify.readerLayout.schedule === 'function') Archify.readerLayout.schedule();
+        if (options.restoreScroll !== false) requestAnimationFrame(function () { window.scrollTo(0, graphScrollY); });
+        if (options.restoreFocus) {
+          var id = Archify.focus && Archify.focus.active();
+          var target = null;
+          Array.prototype.some.call(document.querySelectorAll('[data-node-id]'), function (candidate) {
+            if (candidate.getAttribute('data-node-id') !== id) return false;
+            target = candidate;
+            return true;
+          });
+          if (target) target.focus({ preventScroll: true });
+        }
+        return true;
+      }
+
+      function userError(id, error) {
+        var feedback = document.getElementById('focus-guide-feedback');
+        if (feedback) feedback.textContent = viewerText('viewer.developerGuide.error');
+        window.dispatchEvent(new CustomEvent('archify:guide-error', {
+          detail: { nodeId: id, message: error && error.message ? error.message : String(error) }
+        }));
+      }
+
+      function addressError(id, message) {
+        var error = new Error(message);
+        window.dispatchEvent(new CustomEvent('archify:guide-error', {
+          detail: { nodeId: id || null, message: message }
+        }));
+        return surfaceReady.then(function () { throw error; });
+      }
+
+      function open(id, options) {
+        options = options || {};
+        var guide = node(id);
+        if (!guide) return Promise.resolve(false);
+        var sections = validSections(guide);
+        if (!sections.length) return Promise.resolve(false);
+        var requested = options.section || (currentSurface === 'guide' && currentNodeId === id ? currentSection : null);
+        var section = sections.some(function (candidate) { return candidate.kind === requested; })
+          ? requested : sections[0].kind;
+        if (currentSurface === 'guide' && currentNodeId === id) {
+          if (section !== currentSection) showSection(section);
+          if (pendingOpen) {
+            return surfaceReady.then(function () {
+              return currentSurface === 'guide' && currentNodeId === id;
+            }).catch(function () { return false; });
+          }
+          return Promise.resolve(true);
+        }
+        if (ArchifyAddress.context) {
+          ArchifyAddress.send('navigate', { focus: id, inspect: 'guide', section: section });
+          return Promise.resolve(true);
+        }
+        var trigger = pendingOpen ? pendingOpen.trigger : document.activeElement;
+        var originalState = history.state;
+        var graphHref = location.href;
+        var graphReading = snapshot();
+        var graphEntryCommitted = false;
+        try {
+          if (!renderGuide(id, section)) throw new Error('Developer guide could not be rendered.');
+          var url = location.pathname + location.search + guideHash(id, section);
+          if (!activateGuide(id, section, { emitReady: false, emitError: false })) {
+            throw new Error('Developer guide surface could not be activated.');
+          }
+          var expectedRevision = surfaceRevision;
+          pendingOpen = { revision: expectedRevision, trigger: trigger };
+          return surfaceReady.then(function () {
+            if (!pendingOpen || pendingOpen.revision !== expectedRevision ||
+                expectedRevision !== surfaceRevision || currentSurface !== 'guide' || currentNodeId !== id) return false;
+            url = location.pathname + location.search + guideHash(id, currentSection);
+            var guideHref = new URL(url, location.href).href;
+            var graphEntry = standaloneHistoryState(originalState, 'graph', graphHref, id, null, graphReading);
+            var guideEntry = standaloneHistoryState(originalState, 'guide', guideHref, id, graphHref, snapshot());
+            history.replaceState(graphEntry, '', graphHref);
+            graphEntryCommitted = true;
+            history.pushState(guideEntry, '', url);
+            pendingOpen = null;
+            dispatchReady(id, currentSection);
+            return true;
+          }).catch(function (error) {
+            if (expectedRevision !== surfaceRevision || currentSurface !== 'guide' || currentNodeId !== id) return false;
+            if (graphEntryCommitted) {
+              try { history.replaceState(originalState, '', graphHref); } catch (_) {}
+            }
+            deactivateGuide({ restoreFocus: false, restoreScroll: true });
+            if (trigger && trigger.isConnected && typeof trigger.focus === 'function') {
+              try { trigger.focus({ preventScroll: true }); } catch (_) { try { trigger.focus(); } catch (_) {} }
+            }
+            userError(id, error);
+            return false;
+          });
+        } catch (error) {
+          if (currentSurface === 'guide' && currentNodeId === id) {
+            deactivateGuide({ restoreFocus: false, restoreScroll: false });
+          }
+          userError(id, error);
+          return Promise.resolve(false);
+        }
+      }
+
+      function close(options) {
+        options = options || {};
+        if (currentSurface !== 'guide') return false;
+        var id = currentNodeId;
+        if (ArchifyAddress.context) {
+          ArchifyAddress.send('guide-return');
+          return true;
+        }
+        if (pendingOpen) {
+          var trigger = pendingOpen.trigger;
+          deactivateGuide({ restoreFocus: false });
+          if (options.restoreFocus !== false && trigger && trigger.isConnected && typeof trigger.focus === 'function') {
+            try { trigger.focus({ preventScroll: true }); } catch (_) { try { trigger.focus(); } catch (_) {} }
+          }
+          return true;
+        }
+        var provenance = history.state && history.state.archifyDeveloperGuide;
+        if (provenance && provenance.nodeId === id && provenance.graphHref) {
+          replaceStandaloneReading(location.href);
+          history.back();
+          return true;
+        }
+        var url = location.pathname + location.search + graphHash(id);
+        history.replaceState(history.state, '', url);
+        deactivateGuide({ restoreFocus: options.restoreFocus !== false });
+        return true;
+      }
+
+      function copyLink() {
+        if (!currentNodeId || !guideCopy) return Promise.resolve(false);
+        var value = ArchifyAddress.share(guideHash(currentNodeId, currentSection));
+        var copy = navigator.clipboard && typeof navigator.clipboard.writeText === 'function'
+          ? navigator.clipboard.writeText(value).then(function () { return true; }).catch(function () { return fallbackCopy(value); })
+          : Promise.resolve(fallbackCopy(value));
+        return copy.then(function (copied) {
+          guideCopy.textContent = viewerText(copied ? 'viewer.developerGuide.copySuccess' : 'viewer.developerGuide.copyFailed');
+          guideFeedback.textContent = copied ? '' : viewerText('viewer.developerGuide.copyFailed');
+          window.setTimeout(function () {
+            if (guideCopy) guideCopy.textContent = viewerText('viewer.developerGuide.copyLink');
+          }, 1600);
+          return copied;
+        });
+      }
+
+      function syncAddress() {
+        var params;
+        try { params = new URLSearchParams(ArchifyAddress.location.hash.replace(/^#/, '')); }
+        catch (error) { return Promise.reject(error); }
+        var inspect = params.get('inspect');
+        var id = params.get('focus');
+        var requestedSection = params.get('section');
+        if ((inspect && inspect !== 'guide') || (!inspect && requestedSection)) {
+          renderError(id, 'viewer.developerGuide.error');
+          activateGuide(id || '', null, { focus: false, emitReady: false });
+          return addressError(id, 'Invalid developer guide address.');
+        }
+        if (inspect !== 'guide') {
+          if (currentSurface === 'guide') deactivateGuide({ restoreFocus: false });
+          return Promise.resolve({ surface: 'graph', nodeId: null, section: null });
+        }
+        if (!id) {
+          renderError('', 'viewer.developerGuide.error');
+          activateGuide('', null, { focus: false, emitReady: false });
+          return addressError('', 'Developer guide requires a focused node.');
+        }
+        if (!diagramHasNode(id)) {
+          renderError(id, 'viewer.developerGuide.error');
+          activateGuide(id, null, { focus: false, emitReady: false });
+          return addressError(id, 'Unknown developer guide node ' + id + '.');
+        }
+        var guide = node(id);
+        if (!guide) {
+          renderError(id, 'viewer.developerGuide.empty', 'empty');
+          activateGuide(id, null, { focus: false, emitReady: true });
+          return surfaceReady.then(function () {
+            return { surface: 'guide', nodeId: id, section: null, empty: true };
+          });
+        }
+        var sections = validSections(guide);
+        if (requestedSection && !sections.some(function (section) { return section.kind === requestedSection; })) {
+          renderError(id, 'viewer.developerGuide.error');
+          activateGuide(id, null, { focus: false, emitReady: false });
+          return addressError(id, 'Unknown developer guide section ' + requestedSection + '.');
+        }
+        var section = requestedSection || sections[0].kind;
+        if (currentSurface === 'guide' && currentNodeId === id && guideRoot &&
+            guideRoot.getAttribute('data-guide-state') === 'ready') {
+          if (section !== currentSection) showSection(section, { updateUrl: false });
+          return surfaceReady.then(function () {
+            return { surface: 'guide', nodeId: id, section: currentSection };
+          });
+        }
+        var replacingError = currentSurface === 'guide' && currentNodeId === id;
+        if (!renderGuide(id, section)) return Promise.reject(new Error('Developer guide could not be rendered.'));
+        activateGuide(id, section, { focus: false, forceSettle: replacingError });
+        return surfaceReady.then(function () {
+          return { surface: 'guide', nodeId: id, section: currentSection };
+        });
+      }
+
+      function focusGuide(descriptor) {
+        if (currentSurface !== 'guide' || !guideTitle) return false;
+        var target = descriptor && descriptor.id ? document.getElementById(descriptor.id) : null;
+        if (!target && descriptor && descriptor.section && guideRoot) {
+          Array.prototype.some.call(guideRoot.querySelectorAll('[data-guide-section]'), function (candidate) {
+            if (candidate.getAttribute('data-guide-section') !== descriptor.section) return false;
+            target = candidate;
+            return true;
+          });
+        }
+        if (!target || target.closest('[hidden]')) target = guideTitle;
+        try { target.focus({ preventScroll: true }); }
+        catch (_) { try { target.focus(); } catch (_) { return false; } }
+        return true;
+      }
+
+      function snapshot() {
+        var active = document.activeElement;
+        var focus = active && active.id ? { id: active.id } : null;
+        if (!focus && active && active.getAttribute && active.getAttribute('data-guide-section')) {
+          focus = { section: active.getAttribute('data-guide-section') };
+        }
+        var selected = Archify.focus && Archify.focus.active();
+        var result = {
+          surface: currentSurface,
+          nodeId: currentSurface === 'guide' ? currentNodeId : (typeof selected === 'string' ? selected : null),
+          section: currentSection,
+          scrollTop: window.scrollY,
+          focus: focus
+        };
+        if (!ArchifyAddress.context) {
+          result.scrollLeft = window.scrollX;
+          result.camera = Archify.view && typeof Archify.view.snapshot === 'function' ? Archify.view.snapshot() : null;
+          var selectedTab = document.querySelector('[data-atlas-tab][aria-selected="true"]');
+          result.tabId = selectedTab && selectedTab.id ? selectedTab.id : null;
+          result.panelScroll = {};
+          Array.prototype.forEach.call(document.querySelectorAll('.atlas-inspector-panel[id]'), function (panel) {
+            result.panelScroll[panel.id] = panel.scrollTop;
+          });
+        }
+        return result;
+      }
+
+      function restoreStandaloneReading(state, options) {
+        if (ArchifyAddress.context) return;
+        if (state.surface === 'graph' && typeof state.nodeId === 'string' && Archify.focus &&
+            Archify.focus.active() !== state.nodeId) {
+          Archify.focus.set(state.nodeId, { updateUrl: false, toggle: false });
+        }
+        if (state.tabId) {
+          var tab = document.getElementById(state.tabId);
+          if (tab && tab.getAttribute('aria-selected') !== 'true' && typeof tab.click === 'function') tab.click();
+        }
+        if (state.camera && Archify.view && typeof Archify.view.restore === 'function') Archify.view.restore(state.camera);
+        if (state.panelScroll) {
+          Object.keys(state.panelScroll).forEach(function (id) {
+            var panel = document.getElementById(id);
+            if (panel && Number.isFinite(state.panelScroll[id])) panel.scrollTop = state.panelScroll[id];
+          });
+        }
+        window.scrollTo(Number.isFinite(state.scrollLeft) ? state.scrollLeft : 0,
+          Number.isFinite(state.scrollTop) ? state.scrollTop : 0);
+        if (options.focus === false || !state.focus) return;
+        if (state.surface === 'guide') {
+          focusGuide(state.focus);
+          return;
+        }
+        if (!state.focus.id) return;
+        var target = document.getElementById(state.focus.id);
+        if (target && !target.closest('[hidden]')) {
+          try { target.focus({ preventScroll: true }); }
+          catch (_) { try { target.focus(); } catch (_) {} }
+        }
+      }
+
+      function restore(state, options) {
+        options = options || {};
+        if (!state || (state.surface !== 'guide' && state.surface !== 'graph')) return Promise.resolve(false);
+        if (state.surface === 'graph') {
+          if (currentSurface === 'guide') deactivateGuide({ restoreFocus: false, restoreScroll: false });
+          requestAnimationFrame(function () {
+            if (!ArchifyAddress.context) {
+              restoreStandaloneReading(state, options);
+              return;
+            }
+            if (Number.isFinite(state.scrollTop)) window.scrollTo(0, state.scrollTop);
+            if (options.focus === false || !state.focus || !state.focus.id) return;
+            var graphTarget = document.getElementById(state.focus.id);
+            if (graphTarget && !graphTarget.closest('[hidden]')) graphTarget.focus({ preventScroll: true });
+          });
+          return Promise.resolve(true);
+        }
+        if (!node(state.nodeId)) return Promise.resolve(false);
+        if (!renderGuide(state.nodeId, state.section)) return Promise.resolve(false);
+        activateGuide(state.nodeId, state.section, { focus: false, scroll: false });
+        requestAnimationFrame(function () {
+          if (!ArchifyAddress.context) {
+            restoreStandaloneReading(state, options);
+            return;
+          }
+          if (Number.isFinite(state.scrollTop)) window.scrollTo(0, state.scrollTop);
+          if (options.focus === false || !state.focus) return;
+          var target = state.focus.id ? document.getElementById(state.focus.id) : null;
+          if (!target && state.focus.section) {
+            Array.prototype.some.call(guideRoot.querySelectorAll('[data-guide-section]'), function (candidate) {
+              if (candidate.getAttribute('data-guide-section') !== state.focus.section) return false;
+              target = candidate;
+              return true;
+            });
+          }
+          if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true });
+        });
+        return surfaceReady.then(function () { return true; });
+      }
+
+      function connect() {
+        if (connected) return;
+        connected = true;
+        if (payload && guideNodes().length) {
+          installStyles();
+          ensureQuicklook();
+          html.setAttribute('data-reader-surface', 'graph');
+        }
+        function syncWithoutUnhandledRejection() {
+          if (!ArchifyAddress.context) {
+            syncStandaloneHistoryWithoutUnhandledRejection();
+            return;
+          }
+          syncAddress().catch(function () {});
+        }
+        function syncStandaloneHistoryWithoutUnhandledRejection() {
+          if (standaloneSaveFrame !== null && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(standaloneSaveFrame);
+            standaloneSaveFrame = null;
+          }
+          var expectedRevision = ++standaloneSyncRevision;
+          var expectedHref = location.href;
+          var reading = ArchifyAddress.context ? null : storedStandaloneReading(history.state, expectedHref);
+          syncAddress().then(function () {
+            if (expectedRevision !== standaloneSyncRevision || location.href !== expectedHref) return null;
+            return reading ? restore(reading, { focus: true }) : null;
+          }).then(function () {
+            if (expectedRevision === standaloneSyncRevision && location.href === expectedHref) applyGraphInformation();
+          }).catch(function () {});
+        }
+        window.addEventListener('hashchange', syncWithoutUnhandledRejection);
+        window.addEventListener('popstate', syncStandaloneHistoryWithoutUnhandledRejection);
+        if (!ArchifyAddress.context) {
+          window.addEventListener('scroll', scheduleStandaloneReadingSave, { passive: true });
+          document.addEventListener('scroll', scheduleStandaloneReadingSave, true);
+          document.addEventListener('focusin', scheduleStandaloneReadingSave, true);
+          document.addEventListener('pointerup', scheduleStandaloneReadingSave, true);
+          document.addEventListener('wheel', scheduleStandaloneReadingSave, { capture: true, passive: true });
+        }
+        document.addEventListener('keydown', function (event) {
+          if (event.key !== 'Escape' || currentSurface !== 'guide') return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          close({ restoreFocus: true });
+        });
+        syncStandaloneHistoryWithoutUnhandledRejection();
+      }
+
+      return {
+        available: function () { return Boolean(payload && guideNodes().length); },
+        node: node,
+        guideNodes: guideNodes,
+        renderQuicklook: renderQuicklook,
+        clearQuicklook: clearQuicklook,
+        open: open,
+        close: close,
+        surface: function () { return currentSurface; },
+        section: function () { return currentSection; },
+        syncAddress: syncAddress,
+        snapshot: snapshot,
+        restore: restore,
+        focus: focusGuide,
+        connect: connect
+      };
+    })();
+
     Archify.focus = (function () {
       var html = document.documentElement;
       var container = document.querySelector('.diagram-container');
@@ -42,6 +1129,10 @@
       var svgNamespace = 'http://www.w3.org/2000/svg';
       var reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
       var finePointerQuery = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : null;
+
+      function atlasInspection() {
+        return Boolean(ArchifyAddress.context);
+      }
 
       function nodes() {
         return Array.prototype.slice.call(svg.querySelectorAll('[data-node-id]'));
@@ -145,7 +1236,7 @@
         }
         if (options.updateUrl === true && activeIds.length === 1) {
           try {
-            history.replaceState(null, '', location.pathname + location.search + '#focus=' + encodeURIComponent(activeIds[0]));
+            ArchifyAddress.replaceState(null, '', ArchifyAddress.location.pathname + ArchifyAddress.location.search + '#focus=' + encodeURIComponent(activeIds[0]));
           } catch (_) {}
         }
       }
@@ -224,7 +1315,7 @@
         }
         if (options.updateUrl !== false) {
           try {
-            history.replaceState(null, '', location.pathname + location.search + '#focus=' +
+            ArchifyAddress.replaceState(null, '', ArchifyAddress.location.pathname + ArchifyAddress.location.search + '#focus=' +
               encodeURIComponent(activeIds[0]) + '&reach=' + direction);
           } catch (_) {}
         }
@@ -358,6 +1449,7 @@
             link.referrerPolicy = 'no-referrer';
             link.setAttribute('aria-label', viewerText('viewer.passport.source.open', { path: source.path, revision: repository.shortRevision }));
           }
+          if (source.id) link.setAttribute('data-source-id', source.id);
           var name = document.createElement('strong');
           name.textContent = source.label || source.path.split('/').pop() || source.path;
           var location = document.createElement('code');
@@ -375,6 +1467,7 @@
       }
       function renderPassport(id, node) {
         setPassportValue(detail, node.getAttribute('data-node-sublabel'));
+        Archify.developerGuide.renderQuicklook(id);
         setPassportValue(kind, viewerKindLabel(node.getAttribute('data-node-kind') || 'node'));
         setPassportValue(context, node.getAttribute('data-node-context'));
         setPassportValue(tag, node.getAttribute('data-node-tag'));
@@ -815,7 +1908,7 @@
         });
         revealPinnedRelationship(record);
         if (options.updateUrl !== false && record.id) {
-          try { history.replaceState(null, '', location.pathname + location.search + '#relation=' + encodeURIComponent(record.id)); } catch (_) {}
+          try { ArchifyAddress.replaceState(null, '', ArchifyAddress.location.pathname + ArchifyAddress.location.search + '#relation=' + encodeURIComponent(record.id)); } catch (_) {}
         }
         return true;
       }
@@ -1020,7 +2113,7 @@
       var lensFrame = 0;
       function placeRelationshipLens() {
         lensFrame = 0;
-        if (chip.hidden || activeIds.length !== 1) return;
+        if (chip.hidden || activeIds.length !== 1 || !container.contains(chip)) return;
         var node = svg.querySelector('[data-node-id="' + activeIds[0] + '"]');
         if (!node) return;
         var containerRect = container.getBoundingClientRect();
@@ -1125,6 +2218,7 @@
         label.textContent = '';
         detail.textContent = '';
         detail.hidden = true;
+        Archify.developerGuide.clearQuicklook();
         kind.textContent = '';
         kind.hidden = true;
         context.textContent = '';
@@ -1151,11 +2245,13 @@
         relationsBtn.setAttribute('aria-expanded', 'false');
         chip.removeAttribute('data-relations-expanded');
         chip.style.removeProperty('top');
-        if (options.preserveView !== true && Archify.view && typeof Archify.view.reset === 'function') {
+        if (options.preserveView !== true && atlasInspection() && Archify.view) Archify.view.hold();
+        if (options.preserveView !== true && !atlasInspection() && Archify.view && typeof Archify.view.reset === 'function') {
           Archify.view.reset({ automatic: true });
         }
         if (options.updateUrl !== false) {
-          try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+          try { ArchifyAddress.replaceState(null, '', ArchifyAddress.location.pathname + ArchifyAddress.location.search); } catch (_) {}
+          Archify.developerGuide.syncAddress().catch(function () {});
         }
         if (restoreNode) {
           try { restoreNode.focus({ preventScroll: true }); }
@@ -1225,7 +2321,8 @@
         if (options.updateUrl !== false) {
           var key = options.urlKey || 'focus';
           var value = options.urlValue || normalized[0];
-          try { history.replaceState(null, '', location.pathname + location.search + '#' + key + '=' + encodeURIComponent(value)); } catch (_) {}
+          try { ArchifyAddress.replaceState(null, '', ArchifyAddress.location.pathname + ArchifyAddress.location.search + '#' + key + '=' + encodeURIComponent(value)); } catch (_) {}
+          Archify.developerGuide.syncAddress().catch(function () {});
         }
         return true;
       }
@@ -1236,25 +2333,11 @@
         return setMany([id], options);
       }
 
-      function fallbackCopy(value) {
-        var field = document.createElement('textarea');
-        field.value = value;
-        field.setAttribute('readonly', '');
-        field.style.position = 'fixed';
-        field.style.opacity = '0';
-        document.body.appendChild(field);
-        field.select();
-        var copied = false;
-        try { copied = document.execCommand('copy'); } catch (_) {}
-        field.remove();
-        return copied;
-      }
-
       function copyFocusLink() {
         if (activeIds.length !== 1) return Promise.resolve(false);
         var record = pinnedRelationshipRecord();
         var relationId = record && record.id;
-        var value = location.href.replace(/#.*$/, '') + (relationId
+        var value = ArchifyAddress.share(relationId
           ? '#relation=' + encodeURIComponent(relationId)
           : '#focus=' + encodeURIComponent(activeIds[0]) + (reachabilityMode ? '&reach=' + reachabilityMode : ''));
         var copy = navigator.clipboard && typeof navigator.clipboard.writeText === 'function'
@@ -1277,8 +2360,9 @@
         var node = event.target.closest('[data-node-id]');
         if (node) {
           var id = node.getAttribute('data-node-id');
+          if (atlasInspection() && Archify.view) Archify.view.hold();
           set(id);
-          if (activeIds.indexOf(id) !== -1 && Archify.view && typeof Archify.view.reveal === 'function') {
+          if (!atlasInspection() && activeIds.indexOf(id) !== -1 && Archify.view && typeof Archify.view.reveal === 'function') {
             Archify.view.reveal([id], { includeNeighbors: true, reason: 'focus' });
           }
         }
@@ -1289,8 +2373,9 @@
         if (!node || (event.key !== 'Enter' && event.key !== ' ')) return;
         event.preventDefault();
         var id = node.getAttribute('data-node-id');
+        if (atlasInspection() && Archify.view) Archify.view.hold();
         set(id);
-        if (activeIds.indexOf(id) !== -1 && Archify.view && typeof Archify.view.reveal === 'function') {
+        if (!atlasInspection() && activeIds.indexOf(id) !== -1 && Archify.view && typeof Archify.view.reveal === 'function') {
           Archify.view.reveal([id], { includeNeighbors: true, reason: 'focus' });
         }
       });
@@ -1312,16 +2397,22 @@
         var button = event.target.closest('[data-relationship-target]');
         if (!button) return;
         var id = button.getAttribute('data-relationship-target');
+        var relationshipKey = button.getAttribute('data-relationship-key');
+        if (atlasInspection() && Archify.view) Archify.view.hold();
         if (Archify.guidedViews && typeof Archify.guidedViews.showAll === 'function') {
-          Archify.guidedViews.showAll({ clearFocus: false, updateUrl: false });
+          Archify.guidedViews.showAll({ clearFocus: false, updateUrl: false, resetView: !atlasInspection() });
         }
         set(id, { toggle: false });
-        if (Archify.view && typeof Archify.view.reveal === 'function') {
+        if (!atlasInspection() && Archify.view && typeof Archify.view.reveal === 'function') {
           Archify.view.reveal([id], { includeNeighbors: true, reason: 'relationship' });
         }
-        var node = svg.querySelector('[data-node-id="' + id + '"]');
-        if (node) {
-          try { node.focus({ preventScroll: true }); } catch (_) { try { node.focus(); } catch (_) {} }
+        var nextFocus = atlasInspection()
+          ? Array.prototype.filter.call(relationshipList.querySelectorAll('[data-relationship-key]'), function (row) {
+            return row.getAttribute('data-relationship-key') === relationshipKey;
+          })[0] || relationsBtn
+          : svg.querySelector('[data-node-id="' + id + '"]');
+        if (nextFocus) {
+          try { nextFocus.focus({ preventScroll: true }); } catch (_) { try { nextFocus.focus(); } catch (_) {} }
         }
       });
       relationshipList.addEventListener('pointerover', function (event) {
@@ -1365,9 +2456,10 @@
       });
       document.addEventListener('click', function (event) {
         var target = event.target;
+        if (Archify.developerGuide.surface() === 'guide') return;
         if (chip.hidden || !target || typeof target.closest !== 'function' || chip.contains(target)) return;
         if (container.getAttribute('data-just-panned') === 'true') return;
-        if (target.closest('[data-node-id], [data-relationship-hit-key], .overview-map')) return;
+        if (target.closest('[data-node-id], [data-relationship-hit-key], .overview-map, .atlas-navigation, .atlas-compact-navigation, .atlas-directory, .atlas-breadcrumb, .atlas-parent-context, .atlas-rail, .atlas-inspector, .atlas-directory-section')) return;
         clear();
       }, true);
       window.addEventListener('scroll', requestLensPlacement, { passive: true });
@@ -1391,7 +2483,7 @@
 
       function syncFocusFromHash() {
         try {
-          var params = new URLSearchParams(location.hash.replace(/^#/, ''));
+          var params = new URLSearchParams(ArchifyAddress.location.hash.replace(/^#/, ''));
           var relation = params.get('relation');
           var initial = params.get('focus');
           var reach = params.get('reach');
@@ -1439,3 +2531,4 @@
         active: function () { return activeIds.length === 0 ? null : (activeIds.length === 1 ? activeIds[0] : activeIds.slice()); }
       };
     })();
+    Archify.developerGuide.connect();

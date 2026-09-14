@@ -107,13 +107,287 @@ const CARDS_SLOT_RE = /    <!-- ARCHIFY:CARDS_SLOT_START -->[\s\S]*?    <!-- ARC
 const SUBTITLE_SLOT_RE = /^([ \t]*)<p class="subtitle">\[Subtitle description\]<\/p>[ \t]*(\r?\n)?/m;
 const GUIDED_VIEWS_PLACEHOLDER = '<!-- ARCHIFY:GUIDED_VIEWS_DATA -->';
 const SOURCE_EVIDENCE_PLACEHOLDER = '    <!-- ARCHIFY:SOURCE_EVIDENCE_DATA -->';
+const DEVELOPER_GUIDE_PLACEHOLDER = '    <!-- ARCHIFY:DEVELOPER_GUIDE_DATA -->';
 const I18N_PLACEHOLDER = '    <!-- ARCHIFY:I18N_DATA -->';
 
-function serializeScriptJson(value) {
-  return JSON.stringify(value)
+export const DEVELOPER_GUIDE_NODE_BYTES = 4 * 1024;
+export const DEVELOPER_GUIDE_MEMBER_BYTES = 64 * 1024;
+export const DEVELOPER_GUIDE_ATLAS_BYTES = 128 * 1024;
+
+const HTML_SPACE_RE = /[\t\n\f\r ]/;
+const HTML_RAW_TEXT_ELEMENTS = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'plaintext',
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+]);
+
+function htmlTagEnd(html, start) {
+  let state = 'name';
+  let quote = '';
+  for (let index = start; index < html.length; index += 1) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) {
+        quote = '';
+        state = 'before-attribute';
+      }
+      continue;
+    }
+    if (state === 'name') {
+      if (character === '>') return index;
+      if (HTML_SPACE_RE.test(character) || character === '/') state = 'before-attribute';
+    } else if (state === 'before-attribute') {
+      if (character === '>') return index;
+      if (!HTML_SPACE_RE.test(character) && character !== '/') state = 'attribute-name';
+    } else if (state === 'attribute-name') {
+      if (character === '>') return index;
+      if (character === '=') state = 'before-value';
+      else if (HTML_SPACE_RE.test(character)) state = 'after-attribute-name';
+    } else if (state === 'after-attribute-name') {
+      if (character === '>') return index;
+      if (character === '=') state = 'before-value';
+      else if (!HTML_SPACE_RE.test(character)) state = 'attribute-name';
+    } else if (state === 'before-value') {
+      if (character === '>') return index;
+      if (HTML_SPACE_RE.test(character)) continue;
+      if (character === '"' || character === "'") quote = character;
+      else state = 'unquoted-value';
+    } else if (state === 'unquoted-value') {
+      if (character === '>') return index;
+      if (HTML_SPACE_RE.test(character)) state = 'before-attribute';
+    }
+  }
+  return -1;
+}
+
+function decodeHtmlAttributeValue(value) {
+  const named = { amp: '&', apos: "'", gt: '>', lt: '<', quot: '"' };
+  return value.replace(/&(?:#(?:x([\da-f]+)|(\d+))|([a-z]+));?/gi, (match, hex, decimal, name) => {
+    if (name) return Object.hasOwn(named, name.toLowerCase()) ? named[name.toLowerCase()] : match;
+    const codePoint = Number.parseInt(hex || decimal, hex ? 16 : 10);
+    if (!Number.isFinite(codePoint) || codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      return '\ufffd';
+    }
+    return String.fromCodePoint(codePoint);
+  });
+}
+
+function parseHtmlStartTag(startTag) {
+  let index = 1;
+  if (startTag[index] === '/' || startTag[index] === '!' || startTag[index] === '?') return null;
+  const nameStart = index;
+  while (index < startTag.length && !HTML_SPACE_RE.test(startTag[index]) && !['/', '>'].includes(startTag[index])) index += 1;
+  const tagName = startTag.slice(nameStart, index).toLowerCase();
+  if (!tagName) return null;
+
+  const attributes = Object.create(null);
+  while (index < startTag.length) {
+    while (HTML_SPACE_RE.test(startTag[index] || '')) index += 1;
+    if (index >= startTag.length || startTag[index] === '>' || (startTag[index] === '/' && startTag[index + 1] === '>')) break;
+    const attributeStart = index;
+    while (index < startTag.length
+      && !HTML_SPACE_RE.test(startTag[index])
+      && !['/', '>', '='].includes(startTag[index])) index += 1;
+    const attributeName = startTag.slice(attributeStart, index).toLowerCase();
+    if (!attributeName) {
+      index += 1;
+      continue;
+    }
+    while (HTML_SPACE_RE.test(startTag[index] || '')) index += 1;
+    let value = '';
+    if (startTag[index] === '=') {
+      index += 1;
+      while (HTML_SPACE_RE.test(startTag[index] || '')) index += 1;
+      const quote = startTag[index] === '"' || startTag[index] === "'" ? startTag[index++] : '';
+      const valueStart = index;
+      if (quote) {
+        while (index < startTag.length && startTag[index] !== quote) index += 1;
+        value = startTag.slice(valueStart, index);
+        if (startTag[index] === quote) index += 1;
+      } else {
+        while (index < startTag.length && !HTML_SPACE_RE.test(startTag[index]) && startTag[index] !== '>') index += 1;
+        value = startTag.slice(valueStart, index);
+      }
+    }
+    if (!Object.hasOwn(attributes, attributeName)) {
+      attributes[attributeName] = decodeHtmlAttributeValue(value);
+    }
+  }
+  return { tagName, attributes };
+}
+
+function rawTextElementEnd(html, tagName, contentStart) {
+  if (tagName === 'plaintext') return { contentEnd: html.length, end: html.length, closed: false };
+  const closingStart = new RegExp(`<\\/${tagName}(?=[\\t\\n\\f\\r />])`, 'gi');
+  closingStart.lastIndex = contentStart;
+  let match;
+  while ((match = closingStart.exec(html))) {
+    const end = htmlTagEnd(html, match.index + 2);
+    if (end >= 0) return { contentEnd: match.index, end: end + 1, closed: true };
+  }
+  return { contentEnd: html.length, end: html.length, closed: false };
+}
+
+// Standalone artifacts cannot depend on an installed DOM package. This scanner
+// implements the HTML start-tag behavior relevant to inert script discovery:
+// case-insensitive tag/attribute names, quoted or unquoted values, character
+// references, first-wins duplicate attributes, comments, and raw-text bodies.
+export function findHtmlScriptsById(documentHtml, id) {
+  const html = String(documentHtml);
+  const matches = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = html.indexOf('<', cursor);
+    if (start < 0) break;
+    if (html.startsWith('<!--', start)) {
+      const commentEnd = /--!?>/g;
+      commentEnd.lastIndex = start + 4;
+      const closing = commentEnd.exec(html);
+      cursor = closing ? commentEnd.lastIndex : html.length;
+      continue;
+    }
+    const marker = html[start + 1] || '';
+    if (!/[a-z]/i.test(marker)) {
+      if (marker === '/' && /[a-z]/i.test(html[start + 2] || '')) {
+        const end = htmlTagEnd(html, start + 2);
+        cursor = end < 0 ? html.length : end + 1;
+      } else if (marker === '!' || marker === '?') {
+        const end = html.indexOf('>', start + 2);
+        cursor = end < 0 ? html.length : end + 1;
+      } else cursor = start + 1;
+      continue;
+    }
+    const tagEnd = htmlTagEnd(html, start + 1);
+    if (tagEnd < 0) break;
+    const parsed = parseHtmlStartTag(html.slice(start, tagEnd + 1));
+    if (!parsed) {
+      cursor = tagEnd + 1;
+      continue;
+    }
+    if (!HTML_RAW_TEXT_ELEMENTS.has(parsed.tagName)) {
+      cursor = tagEnd + 1;
+      continue;
+    }
+    const rawText = rawTextElementEnd(html, parsed.tagName, tagEnd + 1);
+    if (parsed.tagName === 'script' && parsed.attributes.id === id) {
+      matches.push({
+        index: start,
+        content: html.slice(tagEnd + 1, rawText.contentEnd),
+        attributes: parsed.attributes,
+        closed: rawText.closed,
+      });
+    }
+    cursor = rawText.end;
+  }
+  return matches;
+}
+
+function guidePayloadObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  return value;
+}
+
+export function parseDeveloperGuidePayload(encoded) {
+  const bytes = Buffer.byteLength(encoded);
+  if (bytes > DEVELOPER_GUIDE_MEMBER_BYTES) {
+    throw new Error(`Rendered developer guide payload is ${bytes} UTF-8 bytes; limit ${DEVELOPER_GUIDE_MEMBER_BYTES}.`);
+  }
+  if (/[<>&]/.test(encoded)) {
+    throw new Error('Rendered developer guide payload must use HTML-safe JSON escaping.');
+  }
+  const chunks = JSON.parse(encoded);
+  if (!Array.isArray(chunks) || chunks.length === 0 || chunks.some((chunk) => typeof chunk !== 'string')) {
+    throw new Error('Rendered developer guide payload must be a non-empty JSON array of string chunks.');
+  }
+  const payload = guidePayloadObject(JSON.parse(chunks.join('')), 'Rendered developer guide payload');
+  if (payload.schemaVersion !== 1) throw new Error('Rendered developer guide payload must use schemaVersion 1.');
+  const nodes = guidePayloadObject(payload.nodes, 'Rendered developer guide nodes');
+  const entries = Object.entries(nodes);
+  if (entries.length === 0) throw new Error('Rendered developer guide nodes must not be empty.');
+
+  let itemCount = 0;
+  for (const [nodeId, candidate] of entries) {
+    const guide = guidePayloadObject(candidate, `Rendered developer guide node ${JSON.stringify(nodeId)}`);
+    const nodeBytes = Buffer.byteLength(serializeScriptJson(guide));
+    if (nodeBytes > DEVELOPER_GUIDE_NODE_BYTES) {
+      throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} is ${nodeBytes} UTF-8 bytes; limit ${DEVELOPER_GUIDE_NODE_BYTES}.`);
+    }
+    if (!Array.isArray(guide.sections) || guide.sections.length === 0) {
+      throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} must contain sections.`);
+    }
+    for (const section of guide.sections) {
+      if (!Array.isArray(section?.items) || section.items.length === 0) {
+        throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} contains an empty or invalid section.`);
+      }
+      itemCount += section.items.length;
+    }
+  }
+  return { payload, nodeCount: entries.length, itemCount, bytes };
+}
+
+export function serializeScriptJson(value, space) {
+  return JSON.stringify(value, null, space)
     .replaceAll('<', '\\u003c')
     .replaceAll('>', '\\u003e')
     .replaceAll('&', '\\u0026');
+}
+
+export function serializeChunkedScriptJson(value, maxLineBytes = 8000) {
+  const serialized = serializeScriptJson(value);
+  const chunks = [];
+  let offset = 0;
+  while (offset < serialized.length) {
+    let low = 1;
+    let high = serialized.length - offset;
+    let accepted = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = serializeScriptJson(serialized.slice(offset, offset + middle));
+      if (Buffer.byteLength(`  ${candidate},`) <= maxLineBytes) {
+        accepted = middle;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    if (!accepted) throw new Error('serializeChunkedScriptJson: maxLineBytes is too small');
+    chunks.push(serialized.slice(offset, offset + accepted));
+    offset += accepted;
+  }
+  if (!chunks.length) chunks.push(serialized);
+  return `[\n${chunks.map((chunk) => `  ${serializeScriptJson(chunk)}`).join(',\n')}\n]`;
+}
+
+// Budget diagnostics point at the first authored guide whose inclusion crosses
+// the limit. Computing prefixes only on the rejected path keeps normal delivery
+// linear while preserving the exact bytes used by the emitted member payload.
+export function findDeveloperGuideBudgetContributor(components, nodes, {
+  baseBytes = 0,
+  limit,
+} = {}) {
+  const prefixNodes = Object.create(null);
+  for (const [componentIndex, component] of (components || []).entries()) {
+    if (!component || !Object.hasOwn(nodes || {}, component.id)) continue;
+    prefixNodes[component.id] = nodes[component.id];
+    const memberBytes = Buffer.byteLength(serializeChunkedScriptJson({
+      schemaVersion: 1,
+      nodes: prefixNodes,
+    }));
+    if (baseBytes + memberBytes > limit) {
+      return {
+        component,
+        componentIndex,
+      };
+    }
+  }
+  return null;
 }
 
 const TEMPLATE_PLACEHOLDERS = [
@@ -132,6 +406,8 @@ export function applyTemplate(template, {
   visualPreset = 'classic',
   guidedViews = [],
   sourceEvidence = null,
+  developerGuide = null,
+  atlasContext = null,
 }) {
   if (!SVG_SLOT_RE.test(template)) {
     throw new Error('applyTemplate: template missing ARCHIFY:SVG_SLOT sentinel');
@@ -153,6 +429,9 @@ export function applyTemplate(template, {
   if (sourceEvidence && !template.includes(SOURCE_EVIDENCE_PLACEHOLDER)) {
     throw new Error(`applyTemplate: repository evidence requires placeholder ${JSON.stringify(SOURCE_EVIDENCE_PLACEHOLDER)}`);
   }
+  if (developerGuide && !template.includes(DEVELOPER_GUIDE_PLACEHOLDER)) {
+    throw new Error(`applyTemplate: developer guide requires placeholder ${JSON.stringify(DEVELOPER_GUIDE_PLACEHOLDER)}`);
+  }
   // Function replacers: a literal `$&`, `$'`, `$\`` or `$$` in titles, labels,
   // or rendered SVG must not be interpreted as a replacement pattern.
   const guidedViewsJson = serializeScriptJson(guidedViews);
@@ -168,6 +447,9 @@ export function applyTemplate(template, {
     ? localizedTemplate.replace(I18N_PLACEHOLDER, () => i18nData)
     : localizedTemplate.replace(GUIDED_VIEWS_PLACEHOLDER, () => `${i18nData}\n    ${GUIDED_VIEWS_PLACEHOLDER}`);
   return templateWithI18n
+    .replace('<!-- ARCHIFY:ATLAS_CONTEXT -->', () => atlasContext
+      ? `<script id="archify-atlas-context" type="application/json">${serializeScriptJson(atlasContext)}</script>`
+      : '')
     .replace(TEMPLATE_PLACEHOLDERS[0], () => `<html lang="${esc(resolvedLocale)}" data-theme="dark" data-preset="${esc(visualPreset)}">`)
     .replace(TEMPLATE_PLACEHOLDERS[1], () => `<title>${esc(translateMessage(resolvedLocale, 'page.title', { title }))}</title>`)
     .replace(TEMPLATE_PLACEHOLDERS[2], () => `<h1>${esc(title)}</h1>`)
@@ -179,6 +461,9 @@ export function applyTemplate(template, {
     .replace(GUIDED_VIEWS_PLACEHOLDER, () => `<script id="archify-guided-views-data" type="application/json">${guidedViewsJson}</script>`)
     .replace(SOURCE_EVIDENCE_PLACEHOLDER, () => sourceEvidence
       ? `    <script id="archify-source-evidence-data" type="application/json">${sourceEvidenceJson}</script>`
+      : '')
+    .replace(DEVELOPER_GUIDE_PLACEHOLDER, () => developerGuide
+      ? `    <script id="archify-developer-guide-data" type="application/json">${developerGuide.encoded}</script>`
       : '');
 }
 

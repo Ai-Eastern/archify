@@ -9,6 +9,7 @@ import {
   MIN_PROJECTED_NODE_TEXT_PX,
   projectedNodeTextPx,
 } from '../renderers/shared/desktop-readability.mjs';
+import { findHtmlScriptsById, parseDeveloperGuidePayload } from '../renderers/shared/utils.mjs';
 
 const input = process.argv[2];
 
@@ -269,6 +270,68 @@ if (svgMatches.length === 1) {
   } else {
     addCheck('legend_clearance', true, ['no legend marker found']);
   }
+}
+
+const developerGuideScripts = findHtmlScriptsById(html, 'archify-developer-guide-data');
+if (developerGuideScripts.length) {
+  const payloadProblems = [];
+  let payload = null;
+  if (developerGuideScripts.length !== 1) {
+    payloadProblems.push(`expected exactly one developer guide payload; found ${developerGuideScripts.length}`);
+  } else {
+    const match = developerGuideScripts[0];
+    const svgStart = svgMatches[0]?.index ?? -1;
+    const svgEnd = svgStart < 0 ? -1 : svgStart + svgMatches[0][0].length;
+    if (match.index >= svgStart && match.index < svgEnd) payloadProblems.push('developer guide payload is nested inside the canonical SVG');
+    const scriptType = String(match.attributes.type || '').trim().toLowerCase();
+    if (scriptType !== 'application/json') payloadProblems.push('developer guide payload script must use type="application/json"');
+    if (!match.closed) payloadProblems.push('developer guide payload script is not closed');
+    if (scriptType === 'application/json' && match.closed) {
+      try {
+        payload = parseDeveloperGuidePayload(match.content).payload;
+      } catch (error) {
+        payloadProblems.push(`developer guide payload is invalid: ${error.message}`);
+      }
+    }
+  }
+
+  if (payload) {
+    const guides = payload?.nodes;
+    if (payload.schemaVersion !== 1 || !guides || Array.isArray(guides) || typeof guides !== 'object') {
+      payloadProblems.push('developer guide payload must contain schemaVersion 1 and a nodes object');
+    } else {
+      const svgNodeIds = new Set([...((svgMatches[0] && svgMatches[0][0].matchAll(/\bdata-node-id="([^"]+)"/g)) || [])].map((item) => item[1]));
+      const evidenceMatches = [...html.matchAll(/<script id="archify-source-evidence-data" type="application\/json">([\s\S]*?)<\/script>/g)];
+      let evidence = null;
+      if (evidenceMatches.length !== 1) payloadProblems.push(`developer guides require exactly one source evidence payload; found ${evidenceMatches.length}`);
+      else {
+        try { evidence = JSON.parse(evidenceMatches[0][1]); }
+        catch (error) { payloadProblems.push(`source evidence payload is invalid: ${error.message}`); }
+      }
+      for (const [nodeId, guide] of Object.entries(guides)) {
+        if (!svgNodeIds.has(nodeId)) payloadProblems.push(`developer guide node ${JSON.stringify(nodeId)} is absent from the canonical SVG`);
+        const sourceIds = new Set((evidence?.nodes?.[nodeId] || []).map((source) => source?.id).filter(Boolean));
+        const facts = [guide?.summary, ...(Array.isArray(guide?.sections)
+          ? guide.sections.flatMap((section) => Array.isArray(section?.items) ? section.items : [])
+          : [])];
+        for (const fact of facts) {
+          if (!Array.isArray(fact?.sourceRefs) || !fact.sourceRefs.length) {
+            payloadProblems.push(`developer guide node ${JSON.stringify(nodeId)} contains a fact without sourceRefs`);
+            continue;
+          }
+          for (const sourceId of fact.sourceRefs) {
+            if (!sourceIds.has(sourceId)) payloadProblems.push(`developer guide node ${JSON.stringify(nodeId)} references missing source ${JSON.stringify(sourceId)}`);
+          }
+        }
+      }
+    }
+  }
+  addCheck('developer_guide_payload', payloadProblems.length === 0, payloadProblems);
+  const oversizedLines = developerGuideScripts.flatMap((match, scriptIndex) => match.content.split(/\r\n|\n|\r/)
+    .map((line, lineIndex) => ({ scriptIndex, lineIndex, bytes: Buffer.byteLength(line) }))
+    .filter((line) => line.bytes > 8192));
+  addCheck('developer_guide_line_budget', oversizedLines.length === 0,
+    oversizedLines.map((line) => `script ${line.scriptIndex + 1} line ${line.lineIndex + 1} is ${line.bytes} UTF-8 bytes; limit 8192`));
 }
 
 const ok = checks.every((check) => check.ok) && composition.status !== 'fail';

@@ -187,12 +187,12 @@ dataflow, and lifecycle reject it. Never infer runtime causality from file
 proximity or naming alone.
 
 Declare `meta.repository.url` and one full 40-character `revision`, then attach
-`components[].sources` with repository-relative `path`, optional `line`,
-`end_line`, and `label`. Verification reads blobs at that commit, independently
-of working-tree edits. A matching local origin, available commit, bounded path,
-blob, and valid line range are required in every link mode. Verification is
-local and makes no remote requests; it establishes neither public availability
-nor the current reader's access rights.
+`components[].sources` with repository-relative `path` and optional stable `id`,
+`role`, `symbol`, `line`, `end_line`, and `label`. Verification reads blobs at
+that commit, independently of working-tree edits. A matching local origin,
+available commit, bounded path, blob, and valid line range are required in every
+link mode. Verification is local and makes no remote requests; it establishes
+neither public availability nor the current reader's access rights.
 
 `link_mode` defaults to `web`. GitHub and Gitee HTTPS repository URLs generate
 revision-pinned links; their public hosts select the provider automatically.
@@ -237,6 +237,130 @@ aliases and forge-specific browse/clone prefixes are not guessed.
 GitLab/Gitea/Forgejo/Bitbucket web links are not implemented in this version;
 use local-only until a tested link provider is available. Unknown web providers
 fail with a diagnostic rather than emitting a guessed link.
+
+### Architecture node developer guides
+
+Architecture schema v1 optionally adds `developer_guide` beside a component's
+existing `sources`. Use it for a concise, evidence-linked path into a module;
+leave it out when the available repository evidence cannot support one. A
+component without this field contributes no guide entry and retains the existing
+inspector; a document with no guides emits no guide payload. Other diagram types
+do not accept this field.
+
+```json
+{
+  "id": "workflow-engine",
+  "type": "backend",
+  "label": "Dynamic Workflow",
+  "sources": [
+    {
+      "id": "workflow-entry",
+      "role": "registration",
+      "path": "extensions/workflows/index.ts",
+      "line": 1123
+    },
+    {
+      "id": "workflow-sandbox-call",
+      "role": "callsite",
+      "path": "extensions/workflows/index.ts",
+      "line": 2057,
+      "symbol": "runWorkflowSandbox"
+    }
+  ],
+  "developer_guide": {
+    "implementation_scope": "repository",
+    "summary": {
+      "text": "Registers the workflow tool and passes prepared scripts to the sandbox.",
+      "source_refs": ["workflow-entry", "workflow-sandbox-call"]
+    },
+    "sections": [
+      {
+        "kind": "interfaces",
+        "items": [
+          {
+            "id": "workflow-tool",
+            "title": "workflow",
+            "code": "workflow({ script, args?, background? })",
+            "direction": "provided",
+            "text": "Accepts a script and optional execution arguments.",
+            "source_refs": ["workflow-entry"]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The authored shape is deliberately bounded:
+
+- `implementation_scope` is `repository`, `external`, or `generated`.
+  `summary` requires `text` of 1–240 characters and one to three
+  `source_refs`. A guide contains one to five nonempty sections, in author
+  order, with at most one section of each fixed kind: `flow`, `interfaces`,
+  `state`, `constraints`, and `change_points`.
+- `flow` contains 3–7 items, `interfaces` contains 1–6, and each other section
+  contains 1–5. Every item requires a component-local stable `id`, `title` of
+  1–80 characters, `text` of 1–280 characters, and one to three
+  `source_refs`. Item IDs are unique across that component's guide. A source
+  reference may occur only once in one fact.
+- An interface item also requires `direction`: `provided`, `required`,
+  `bidirectional`, or `observed`. Its optional `code` is 1–200 characters.
+  Other section kinds reject `direction` and `code`. Every guide, summary,
+  section, and item object rejects fields outside the schema; do not author
+  Markdown, HTML, custom sections, tabs, panels, placement, or viewport data.
+- `id`, `role`, and `symbol` remain optional on a legacy source. Any authored
+  source ID is unique within its component, including when that component has no
+  guide; another component may reuse the same local ID. A `symbol`, when present,
+  contains 1–200 characters and no control character. Every guide reference
+  resolves to a `sources[].id` on its own component and that source has one of
+  these roles: `definition`, `export`, `registration`, `callsite`, `guard`,
+  `test`, `schema`, or `documentation`. The existing limit of three sources per
+  component still applies. `provided` needs an `export` or `registration`;
+  `required` and `observed` need a `callsite` or `registration`.
+  `bidirectional` needs two different source IDs, one supporting the provided
+  side and one supporting the required/observed side.
+- A guide requires pinned `meta.repository` metadata. Commands that verify or
+  render it therefore also require the matching `--repo-root`. This does not add
+  a repository requirement to an old architecture that has neither repository
+  evidence nor a guide; an old document that already declares repository
+  evidence keeps the existing requirement.
+
+Keep the guide selective. The compiled, HTML-safe guide object for one node is
+limited to 4096 UTF-8 bytes. The actual chunked JSON text written inside one
+member's inert `archify-developer-guide-data` script is limited to 65,536 bytes;
+an Atlas limits the sum of those per-member script-text byte counts to 131,072.
+The renderer keeps author order, converts the presentation payload to camel-case
+fields, and writes one node-indexed payload outside the canonical SVG. Each
+payload line is bounded to 8192 UTF-8 bytes. See the
+[delivery contract](delivery-contract.md#developer-guide-delivery-evidence) for
+the receipt measured from those emitted bytes.
+
+Treat evidence checks as three distinct claims. Schema and compiler checks prove
+the bounded structure, local reference resolution, and the declared role mix.
+Repository verification proves the origin, pinned commit, blob, path, selected
+line range, and optional symbol location. For an identifier-shaped `symbol`, the
+verifier requires an exact identifier token in the authored range (or the whole
+blob when no range is authored); other symbols use a literal substring match.
+This is location evidence, not AST declaration recognition, public-interface
+discovery, or behavioral proof. Source `role` is authored metadata, so a valid
+direction/role combination does not establish that the role was described
+correctly.
+
+Independently review each summary and item against its pinned source before
+claiming the guide is semantically correct. Do not derive a code symbol from a
+node label, turn a definition into a public interface without export or
+registration evidence, or state retry, concurrency, cancellation, ordering,
+ownership, persistence, or failure guarantees without supporting implementation,
+guard, or test evidence. For `external`, describe only the integration surface
+or call-side behavior visible in the pinned repository. For `generated`, prefer
+schema or generator evidence. Changing `meta.repository.revision` requires all
+source locations and claims to be reviewed again.
+
+Guide and source prose is plain authored text and is not translated by the
+Viewer. Renderer-owned labels follow `meta.locale`. In `local-only`, relative
+paths, ranges, roles, and symbols remain readable, while the payload and DOM omit
+remote source links and the local repository root.
 
 ## Hand-placed fallback
 
