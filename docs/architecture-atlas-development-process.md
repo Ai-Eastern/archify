@@ -1,6 +1,6 @@
 # Architecture Atlas 轻量开发流程
 
-Architecture Atlas 仍处于试验阶段。当前目标是允许高频迭代，同时保持 `main` 随时可发布；本流程不设置独立的 Alpha、Beta 阶段。
+Architecture Atlas 仍处于试验阶段。当前目标是允许高频迭代，同时保持 `main` 随时可发布。
 
 ## 分支职责
 
