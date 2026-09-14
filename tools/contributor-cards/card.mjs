@@ -76,6 +76,10 @@ export async function renderCard(record, outputDirectory, { chrome = findChrome(
         while (overflow(e) && size > Number(e.dataset.fitMin)) {
           size -= 1; e.style.fontSize = size + 'px';
         }
+        if (overflow(e) && e.dataset.wrap === 'true') {
+          e.style.whiteSpace = 'normal'; e.style.overflowWrap = 'anywhere';
+          e.dataset.wrapped = 'true';
+        }
         if (overflow(e) && e.dataset.ellipsis === 'true') {
           e.dataset.truncated = 'true';
           const parts = [...new Intl.Segmenter('en', {granularity:'grapheme'}).segment(e.textContent)].map(p => p.segment);
@@ -89,9 +93,10 @@ export async function renderCard(record, outputDirectory, { chrome = findChrome(
       const fonts = [...document.fonts].map(f => ({family:f.family,status:f.status}));
       if (fonts.some(f => f.status !== 'loaded')) throw new Error('A bundled font did not load');
       if (clipped.length) throw new Error('Clipped elements: ' + clipped.join(', '));
+      if (document.querySelector('.identity').getBoundingClientRect().bottom > 320) throw new Error('Contributor identity exceeds the map clearance');
       if (document.querySelector('.moment').getBoundingClientRect().bottom + 20 > document.querySelector('footer').getBoundingClientRect().top) throw new Error('Message overlaps the contribution record');
       return {width:1000,height:1500,fonts,clipped,text:document.body.innerText,
-        fitted:[...document.querySelectorAll('[data-fit-min]')].map(e=>({text:e.innerText,fontSize:getComputedStyle(e).fontSize,truncated:e.dataset.truncated === 'true'}))};
+        fitted:[...document.querySelectorAll('[data-fit-min]')].map(e=>({text:e.innerText,fontSize:getComputedStyle(e).fontSize,truncated:e.dataset.truncated === 'true',wrapped:e.dataset.wrapped === 'true'}))};
     })()` });
     if (metrics.exceptionDetails) throw new Error(metrics.exceptionDetails.exception?.description || metrics.exceptionDetails.text);
     receipt = metrics.result.value;

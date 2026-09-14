@@ -37,13 +37,14 @@ test('real browser fits long GitHub usernames, long unbroken titles and Chinese 
   try {
     for (const [number, login, title] of [
       [394,'tt-a1i',pull.title],
-      [395,'a'.repeat(39),'W'.repeat(256)],
+      [395,'W'.repeat(39),'W'.repeat(256)],
       [396,'contributor','修复复杂架构图中的边界重叠问题，并改善中文说明和长标题在贡献卡上的排版效果。'.repeat(3)],
       [397,'contributor','<script>document.body.remove()</script> & safe text'],
     ]) {
       const record=recordFromPull({...pull,number,title,user:{type:'User',login}},'tt-a1i/archify');
       const result=await renderCard(record,output);
       assert.deepEqual(result.receipt.clipped,[]);
+      if(number===395) { assert.equal(result.receipt.fitted[0].wrapped,true); assert.equal(result.receipt.fitted[1].truncated,true); }
       assert.ok(result.receipt.text.includes('@'+login));
       assert.ok(result.receipt.text.includes('Merged'));
       const png=await fs.readFile(result.stem+'.png');
