@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-visual-check-'));
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
+
+test('invalid Atlas replaces stale passing evidence before attempting Chrome', () => {
+  for (const payload of ['{broken', JSON.stringify({ bundle_version: 1 })]) {
+    const input = artifact('invalid-atlas.html');
+    const outputs = sidecarPaths(input);
+    fs.writeFileSync(input, `<script id="archify-atlas-data" type="application/json">${payload}</script>`);
+    const memberCapture = `${outputs.base}.previous.1440x900.light.png`;
+    const unrelated = `${outputs.base}.keep.png`;
+    fs.writeFileSync(outputs.receipt, JSON.stringify({ status: 'pass' }));
+    fs.writeFileSync(outputs.contactSheet, 'old passing evidence');
+    fs.writeFileSync(memberCapture, png);
+    fs.writeFileSync(unrelated, 'unrelated');
+    const result = spawnSync(process.execPath, [path.join(skillRoot, 'bin/archify.mjs'), 'visual-check', input, '--json'], {
+      encoding: 'utf8', env: { ...process.env, ARCHIFY_CHROME: '/nonexistent/chrome' },
+    });
+    assert.equal(result.status, 1);
+    const receipt = JSON.parse(fs.readFileSync(outputs.receipt, 'utf8'));
+    assert.equal(receipt.status, 'fail');
+    assert.equal(receipt.artifact.sha256, sha256(input));
+    assert.deepEqual(JSON.parse(result.stdout), receipt);
+    assert.equal(fs.existsSync(memberCapture), false);
+    assert.equal(fs.existsSync(outputs.contactSheet), false);
+    assert.equal(fs.readFileSync(unrelated, 'utf8'), 'unrelated');
+  }
+});
 
 function artifact(name = 'diagram.html') {
   const file = path.join(tmp, name);
@@ -89,6 +115,18 @@ function fakeChromeChild() {
   };
   return child;
 }
+
+test('visual-check closes its owned pipes even when Chrome exits before inherited streams close', async () => {
+  for (const exited of [false, true]) {
+    const child = fakeChromeChild();
+    const browser = new ChromeVisualBrowser('/fake/chrome', { spawnImpl: () => child });
+    const startup = browser.sessionPromise.catch(() => {});
+    if (exited) child.exitCode = 0;
+    await browser.close(); await startup;
+    assert.ok(child.stdio.filter(Boolean).every(stream => stream.destroyed), 'Browser-owned pipes must not keep the caller alive');
+    assert.equal(browser.cdp.pending.size, 0);
+  }
+});
 
 test('visual-check disables the Chrome sandbox only for root or an explicit environment opt-in', () => {
   const profileRoot = path.join(tmp, 'chrome-profile');

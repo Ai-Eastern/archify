@@ -20,7 +20,8 @@ const lensMarker = '/* ARCHIFY:SEMANTIC_LENS */';
 const routeMarker = '/* ARCHIFY:ROUTE_PROBE */';
 const focusMarker = '/* ARCHIFY:FOCUS */';
 const guidedMarker = '/* ARCHIFY:GUIDED_VIEWS */';
-const fragments = { export: exportMarker, reader: marker, cleanup: cleanupMarker, chrome: chromeMarker, camera: cameraMarker, radar: radarMarker, motion: motionMarker, finder: finderMarker, intent: intentMarker, lens: lensMarker, route: routeMarker, guided: guidedMarker, focus: focusMarker };
+const addressMarker = '/* ARCHIFY:ADDRESS */';
+const fragments = { address: addressMarker, export: exportMarker, reader: marker, cleanup: cleanupMarker, chrome: chromeMarker, camera: cameraMarker, radar: radarMarker, motion: motionMarker, finder: finderMarker, intent: intentMarker, lens: lensMarker, route: routeMarker, guided: guidedMarker, focus: focusMarker };
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-viewer-build-'));
@@ -34,6 +35,7 @@ function fixture(t) {
   return {
     root, output,
     shell: path.join(root, 'viewer/template.source.html'),
+    address: path.join(root, 'viewer/viewer-address.js'),
     export: path.join(root, 'viewer/export.js'),
     reader: path.join(root, 'viewer/reader-layout.js'),
     cleanup: path.join(root, 'viewer/export-cleanup.js'),
@@ -118,7 +120,8 @@ for (const [fragment, slot] of Object.entries(fragments)) {
 test('assembly preserves literal replacement tokens, Unicode and source line endings', (t) => {
   const f = fixture(t);
   const reader = '// $& $\' $` $$ 中文 \u{1f5fa}\r\n(function () {})();\r\n';
-  fs.writeFileSync(f.shell, `<script>\r\n${focusMarker}${guidedMarker}${routeMarker}${lensMarker}${intentMarker}${finderMarker}${motionMarker}${radarMarker}${cameraMarker}${chromeMarker}${exportMarker}${marker}</script>\n`);
+  fs.writeFileSync(f.shell, `<script>\r\n${addressMarker}${focusMarker}${guidedMarker}${routeMarker}${lensMarker}${intentMarker}${finderMarker}${motionMarker}${radarMarker}${cameraMarker}${chromeMarker}${exportMarker}${marker}</script>\n`);
+  fs.writeFileSync(f.address, reader);
   fs.writeFileSync(f.export, reader + cleanupMarker);
   fs.writeFileSync(f.cleanup, reader);
   fs.writeFileSync(f.chrome, reader);
@@ -133,7 +136,7 @@ test('assembly preserves literal replacement tokens, Unicode and source line end
   fs.writeFileSync(f.focus, reader);
   fs.writeFileSync(f.reader, reader);
   assert.equal(f.run().status, 0);
-  assert.equal(fs.readFileSync(f.output, 'utf8'), `<script>\r\n${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}</script>\n`);
+  assert.equal(fs.readFileSync(f.output, 'utf8'), `<script>\r\n${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}${reader}</script>\n`);
   assert.equal(f.run('--check').status, 0);
 });
 

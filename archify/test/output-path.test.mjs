@@ -272,10 +272,12 @@ test('deliver rechecks aliases immediately before committing a verified candidat
   fs.mkdirSync(installedRenderer, { recursive: true });
   fs.mkdirSync(installedScripts, { recursive: true });
   fs.copyFileSync(cli, path.join(installedBin, 'archify.mjs'));
-  fs.copyFileSync(
-    path.join(skillRoot, 'renderers/shared/output-path.mjs'),
-    path.join(installedShared, 'output-path.mjs'),
-  );
+  for (const module of ['output-path.mjs', 'utils.mjs', 'i18n.mjs']) {
+    fs.copyFileSync(
+      path.join(skillRoot, 'renderers/shared', module),
+      path.join(installedShared, module),
+    );
+  }
   fs.writeFileSync(path.join(installedRenderer, 'render-workflow.mjs'), `
 import fs from 'node:fs';
 const [, output] = process.argv.slice(2);

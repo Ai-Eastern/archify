@@ -42,6 +42,13 @@ function repositoryFixture() {
   write(root, 'archify/scripts/check-update.mjs', 'export {};\n');
   write(root, 'archify/scripts/update-contract.mjs', 'export {};\n');
   write(root, 'archify/renderers/shared/generated-validators.mjs', 'export {};\n');
+  write(root, 'archify/schemas/atlas.schema.json', '{}\n');
+  for (const name of ['atlas-manifest', 'atlas-delivery', 'atlas-bundle', 'atlas-envelope', 'atlas-shell', 'atlas-navigation']) {
+    write(root, `archify/renderers/shared/${name}.mjs`, 'export {};\n');
+  }
+  write(root, 'archify/assets/vendor/fflate-gunzip-0.8.2.min.js', 'globalThis.ArchifyGzipFallback=()=>{};\n');
+  write(root, 'archify/assets/vendor/fflate-MIT.txt', 'MIT License\n');
+  write(root, 'archify/references/architecture-atlas.md', '# Atlas\n');
   write(root, 'archify/test/repository-only.test.mjs', 'throw new Error();\n');
   git(root, ['init']);
   git(root, ['add', 'THIRD_PARTY_NOTICES.md']);

@@ -31,6 +31,40 @@ const EXAMPLES = {
   lifecycle: 'agent-run.lifecycle.json',
 };
 
+const DEVELOPER_GUIDE_MESSAGES = {
+  'viewer.developerGuide.overview': ['Node overview', '节点速览'],
+  'viewer.developerGuide.open': ['Open developer guide →', '打开开发指南 →'],
+  'viewer.developerGuide.backToDiagram': ['Back to diagram', '返回图'],
+  'viewer.developerGuide.copyLink': ['Copy developer guide link', '复制开发指南链接'],
+  'viewer.developerGuide.copySuccess': ['Developer guide link copied', '已复制开发指南链接'],
+  'viewer.developerGuide.copyFailed': ['Could not copy developer guide link', '无法复制开发指南链接'],
+  'viewer.developerGuide.implementationScope': ['Implementation scope', '实现范围'],
+  'viewer.developerGuide.implementationScope.repository': ['Repository implementation', '仓库内实现'],
+  'viewer.developerGuide.implementationScope.external': ['External dependency', '外部依赖'],
+  'viewer.developerGuide.implementationScope.generated': ['Generated artifact', '生成产物'],
+  'viewer.developerGuide.section.flow': ['Runtime flow', '运行流程'],
+  'viewer.developerGuide.section.interfaces': ['Interfaces', '接口'],
+  'viewer.developerGuide.section.state': ['State', '状态'],
+  'viewer.developerGuide.section.constraints': ['Constraints', '约束'],
+  'viewer.developerGuide.section.changePoints': ['Change points', '修改与验证入口'],
+  'viewer.developerGuide.direction.provided': ['Provided', '对外提供'],
+  'viewer.developerGuide.direction.required': ['Required', '依赖调用'],
+  'viewer.developerGuide.direction.bidirectional': ['Bidirectional', '双向'],
+  'viewer.developerGuide.direction.observed': ['Observed', '调用侧观察'],
+  'viewer.developerGuide.evidenceLink': ['View source evidence', '查看源码证据'],
+  'viewer.developerGuide.sourceRole.definition': ['Definition', '定义'],
+  'viewer.developerGuide.sourceRole.export': ['Export', '导出'],
+  'viewer.developerGuide.sourceRole.registration': ['Registration', '注册点'],
+  'viewer.developerGuide.sourceRole.callsite': ['Call site', '调用侧观察'],
+  'viewer.developerGuide.sourceRole.guard': ['Guard', '守卫'],
+  'viewer.developerGuide.sourceRole.test': ['Test coverage', '测试覆盖'],
+  'viewer.developerGuide.sourceRole.schema': ['Schema', 'Schema'],
+  'viewer.developerGuide.sourceRole.documentation': ['Documentation', '文档'],
+  'viewer.developerGuide.empty': ['No developer guide is available for this node.', '此节点尚未提供开发指南。'],
+  'viewer.developerGuide.error': ['Could not open the developer guide.', '无法打开开发指南。'],
+  'viewer.developerGuide.retry': ['Retry', '重试'],
+};
+
 function example(type) {
   return JSON.parse(fs.readFileSync(path.join(skillRoot, 'examples', EXAMPLES[type]), 'utf8'));
 }
@@ -377,6 +411,36 @@ test('every supported catalog is complete and preserves interpolation variables'
       assert.deepEqual(variables(message), expected, `${locale}: ${key}`);
     }
   }
+});
+
+test('developer guide controls, sections, evidence, and failure states have exact bilingual catalog copy', () => {
+  for (const [key, [english, chinese]] of Object.entries(DEVELOPER_GUIDE_MESSAGES)) {
+    assert.equal(translateMessage('en', key), english, key);
+    assert.equal(translateMessage('zh-CN', key), chinese, key);
+    assert.equal(translateMessage(undefined, key), english, `${key}: omitted locale`);
+    assert.equal(translateMessage('fr', key), english, `${key}: unsupported runtime locale`);
+  }
+});
+
+test('developer guide Viewer copy stays catalog-owned instead of being hardcoded in the generated template', () => {
+  const template = fs.readFileSync(templatePath, 'utf8');
+  const distinctiveCopy = [
+    'Node overview',
+    'Open developer guide →',
+    'Back to diagram',
+    'Implementation scope',
+    'Change points',
+    'No developer guide is available for this node.',
+    'Could not open the developer guide.',
+    '节点速览',
+    '打开开发指南 →',
+    '返回图',
+    '实现范围',
+    '修改与验证入口',
+    '此节点尚未提供开发指南。',
+    '无法打开开发指南。',
+  ];
+  for (const copy of distinctiveCopy) assert.ok(!template.includes(copy), copy);
 });
 
 test('runtime labels stay localized after composition', () => {
