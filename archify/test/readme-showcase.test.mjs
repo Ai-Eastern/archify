@@ -227,7 +227,8 @@ test('README stays scannable without deleting the visual proof set', () => {
   const wordCount = english.trim().split(/\s+/).length;
   const intro = english.slice(0, english.indexOf('![License]'));
   const introBullets = intro.match(/^- \*\*/gm) || [];
-  assert.ok(wordCount <= 2085, `README.md is too verbose again (${wordCount} words)`);
+  // Allow the restored EverMind sponsor description without cutting product documentation.
+  assert.ok(wordCount <= 2125, `README.md is too verbose again (${wordCount} words)`);
   assert.ok(introBullets.length <= 8, `README.md has too many top-level capability bullets (${introBullets.length})`);
 
   const chinese = fs.readFileSync(path.join(repoRoot, 'README_ZH.md'), 'utf8');
