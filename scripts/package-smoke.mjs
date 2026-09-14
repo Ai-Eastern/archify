@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,6 +53,72 @@ function runExpectFailure(args, options = {}) {
   });
   if (result.status === 0) throw new Error(`archify ${args.join(' ')} unexpectedly passed`);
   return result.stdout;
+}
+
+function runGit(repository, args) {
+  const result = spawnSync('git', ['-C', repository, ...args], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error([
+      `git ${args.join(' ')} failed with ${result.status}`,
+      result.stdout,
+      result.stderr,
+    ].filter(Boolean).join('\n'));
+  }
+  return result.stdout.trim();
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function developerGuidePayload(html) {
+  const matches = [...html.matchAll(
+    /<script id="archify-developer-guide-data" type="application\/json">([\s\S]*?)<\/script>/g,
+  )];
+  if (matches.length !== 1) {
+    throw new Error(`packaged Architecture must contain one developer guide payload, found ${matches.length}`);
+  }
+  const body = matches[0][1];
+  let chunks;
+  let data;
+  try {
+    chunks = JSON.parse(body);
+    if (!Array.isArray(chunks) || chunks.some((chunk) => typeof chunk !== 'string')) {
+      throw new Error('outer payload is not a string-chunk array');
+    }
+    data = JSON.parse(chunks.join(''));
+  } catch (error) {
+    throw new Error(`packaged developer guide payload is not decodable: ${error.message}`);
+  }
+  if (data?.schemaVersion !== 1 || !data.nodes || Array.isArray(data.nodes)
+    || typeof data.nodes !== 'object') {
+    throw new Error('packaged developer guide payload has an invalid envelope');
+  }
+  return { body, data };
+}
+
+function expectedDeveloperGuideReceipt(payload) {
+  const guides = Object.values(payload.data.nodes);
+  return {
+    schemaVersion: 1,
+    nodeCount: guides.length,
+    itemCount: guides.reduce((count, guide) => count + guide.sections.reduce(
+      (subtotal, section) => subtotal + section.items.length,
+      0,
+    ), 0),
+    bytes: Buffer.byteLength(payload.body),
+    sha256: sha256(payload.body),
+  };
+}
+
+function requireDeveloperGuideReceipt(actual, expected, context) {
+  for (const field of ['schemaVersion', 'nodeCount', 'itemCount', 'bytes', 'sha256']) {
+    if (actual?.[field] !== expected[field]) {
+      throw new Error(`${context} developer guide receipt has invalid ${field}`);
+    }
+  }
 }
 
 try {
@@ -286,6 +353,155 @@ try {
   const deployment = path.join(scratch, 'deployment.html');
   run(['render', 'architecture', path.join(skillRoot, 'examples', fixtures[0][1]), deployment]);
   run(['check', deployment]);
+
+  const guideRepository = path.join(scratch, 'guide-repository');
+  fs.mkdirSync(path.join(guideRepository, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(guideRepository, 'src', 'handler.js'), [
+    'export function registerHandler(input) {',
+    '  return input;',
+    '}',
+    '',
+  ].join('\n'));
+  runGit(guideRepository, ['init', '--quiet']);
+  runGit(guideRepository, ['config', 'user.name', 'Archify Package Smoke']);
+  runGit(guideRepository, ['config', 'user.email', 'archify@example.test']);
+  runGit(guideRepository, ['config', 'commit.gpgSign', 'false']);
+  const guideRepositoryUrl = 'https://github.com/example/archify-package-guide.git';
+  runGit(guideRepository, ['remote', 'add', 'origin', guideRepositoryUrl]);
+  runGit(guideRepository, ['add', 'src/handler.js']);
+  runGit(guideRepository, ['commit', '--quiet', '-m', 'developer guide fixture']);
+  const guideRevision = runGit(guideRepository, ['rev-parse', 'HEAD']);
+  if (!/^[a-f0-9]{40}$/.test(guideRevision)) {
+    throw new Error('package developer guide fixture did not produce a fixed Git revision');
+  }
+
+  const guideSentinel = 'package-guide-only-sentinel';
+  const guideDiagram = {
+    schema_version: 1,
+    diagram_type: 'architecture',
+    meta: {
+      title: 'Package Developer Guide',
+      repository: {
+        url: guideRepositoryUrl,
+        revision: guideRevision,
+        link_mode: 'local-only',
+      },
+    },
+    components: [{
+      id: 'handler',
+      type: 'backend',
+      label: 'Request Handler',
+      pos: [120, 120],
+      size: [180, 72],
+      sources: [{
+        id: 'handler-export',
+        role: 'export',
+        path: 'src/handler.js',
+        line: 1,
+        end_line: 3,
+        symbol: 'registerHandler',
+      }],
+      developer_guide: {
+        implementation_scope: 'repository',
+        summary: {
+          text: guideSentinel,
+          source_refs: ['handler-export'],
+        },
+        sections: [{
+          kind: 'interfaces',
+          items: [{
+            id: 'register-handler',
+            title: 'registerHandler',
+            code: 'registerHandler(input)',
+            direction: 'provided',
+            text: 'Accepts one input and returns it to the caller.',
+            source_refs: ['handler-export'],
+          }],
+        }],
+      },
+    }],
+  };
+  const guideInput = path.join(guideRepository, 'guide.architecture.json');
+  fs.writeFileSync(guideInput, `${JSON.stringify(guideDiagram, null, 2)}\n`);
+  const guideFirstOutput = path.join(scratch, 'guide-first.html');
+  const guideSecondOutput = path.join(scratch, 'guide-second.html');
+  const guideFirstReceipt = JSON.parse(run([
+    'deliver', 'architecture', guideInput, guideFirstOutput,
+    '--repo-root', guideRepository, '--json',
+  ]));
+  const guideSecondReceipt = JSON.parse(run([
+    'deliver', 'architecture', guideInput, guideSecondOutput,
+    '--repo-root', guideRepository, '--json',
+  ]));
+  const guideFirstHtml = fs.readFileSync(guideFirstOutput, 'utf8');
+  const guideSecondHtml = fs.readFileSync(guideSecondOutput, 'utf8');
+  if (sha256(guideFirstHtml) !== sha256(guideSecondHtml)) {
+    throw new Error('packaged developer guide delivery is not byte-deterministic');
+  }
+  const guidePayload = developerGuidePayload(guideFirstHtml);
+  const guideNode = guidePayload.data.nodes.handler;
+  if (guideNode?.summary?.text !== guideSentinel
+    || guideNode?.sections?.[0]?.items?.[0]?.id !== 'register-handler') {
+    throw new Error('packaged developer guide payload did not preserve the authored node guide');
+  }
+  const guideReceipt = expectedDeveloperGuideReceipt(guidePayload);
+  requireDeveloperGuideReceipt(guideFirstReceipt.developerGuide, guideReceipt, 'first delivery');
+  requireDeveloperGuideReceipt(guideSecondReceipt.developerGuide, guideReceipt, 'second delivery');
+  if (guideFirstReceipt.evidence?.revision !== guideRevision
+    || guideFirstReceipt.evidence?.references !== 1) {
+    throw new Error('packaged developer guide delivery omitted its fixed source evidence receipt');
+  }
+  const canonicalSvg = guideFirstHtml.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '';
+  if (!canonicalSvg || canonicalSvg.includes(guideSentinel)
+    || canonicalSvg.includes('register-handler')) {
+    throw new Error('packaged developer guide content leaked into the canonical SVG');
+  }
+
+  const guideAtlasInput = path.join(guideRepository, 'guide.atlas.json');
+  fs.writeFileSync(guideAtlasInput, `${JSON.stringify({
+    atlas_version: 1,
+    entry: 'guide',
+    meta: { title: 'Package Developer Guide Atlas' },
+    diagrams: { guide: { source: 'guide.architecture.json' } },
+  }, null, 2)}\n`);
+  const guideAtlasFirstOutput = path.join(scratch, 'guide-atlas-first.html');
+  const guideAtlasSecondOutput = path.join(scratch, 'guide-atlas-second.html');
+  const guideAtlasFirstReceipt = JSON.parse(run([
+    'deliver', 'atlas', guideAtlasInput, guideAtlasFirstOutput,
+    '--repo-root', guideRepository, '--json',
+  ]));
+  run([
+    'deliver', 'atlas', guideAtlasInput, guideAtlasSecondOutput,
+    '--repo-root', guideRepository, '--json',
+  ]);
+  const guideAtlasFirstHtml = fs.readFileSync(guideAtlasFirstOutput, 'utf8');
+  const guideAtlasSecondHtml = fs.readFileSync(guideAtlasSecondOutput, 'utf8');
+  if (sha256(guideAtlasFirstHtml) !== sha256(guideAtlasSecondHtml)) {
+    throw new Error('packaged Atlas developer guide delivery is not byte-deterministic');
+  }
+  requireDeveloperGuideReceipt(
+    guideAtlasFirstReceipt.members?.guide?.developerGuide,
+    guideReceipt,
+    'first Atlas member',
+  );
+  const invalidGuideDiagram = JSON.parse(JSON.stringify(guideDiagram));
+  invalidGuideDiagram.components[0].sources[0].symbol = 'missingHandler';
+  const invalidGuideInput = path.join(guideRepository, 'invalid-guide.architecture.json');
+  const preservedGuideOutput = path.join(scratch, 'preserved-guide.html');
+  const preservedGuideContents = 'trusted previous package artifact\n';
+  fs.writeFileSync(invalidGuideInput, `${JSON.stringify(invalidGuideDiagram, null, 2)}\n`);
+  fs.writeFileSync(preservedGuideOutput, preservedGuideContents);
+  const guideFailure = JSON.parse(runExpectFailure([
+    'deliver', 'architecture', invalidGuideInput, preservedGuideOutput,
+    '--repo-root', guideRepository, '--json',
+  ]));
+  if (guideFailure.ok
+    || !guideFailure.diagnostics?.some((entry) => entry.code === 'repository-evidence/symbol-missing')) {
+    throw new Error('packaged developer guide delivery did not reject invalid pinned symbol evidence');
+  }
+  if (fs.readFileSync(preservedGuideOutput, 'utf8') !== preservedGuideContents) {
+    throw new Error('failed packaged developer guide delivery replaced the previous artifact');
+  }
 
   const compareReceipt = JSON.parse(run([
     'compare', 'architecture',

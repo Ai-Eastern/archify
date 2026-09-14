@@ -15,6 +15,16 @@ const REQUIRED_INPUTS = new Set([
   'archify/scripts/check-update.mjs',
   'archify/scripts/update-contract.mjs',
   'archify/skill-release.json',
+  'archify/schemas/atlas.schema.json',
+  'archify/renderers/shared/atlas-manifest.mjs',
+  'archify/renderers/shared/atlas-delivery.mjs',
+  'archify/renderers/shared/atlas-bundle.mjs',
+  'archify/renderers/shared/atlas-envelope.mjs',
+  'archify/renderers/shared/atlas-shell.mjs',
+  'archify/renderers/shared/atlas-navigation.mjs',
+  'archify/references/architecture-atlas.md',
+  'archify/assets/vendor/fflate-gunzip-0.8.2.min.js',
+  'archify/assets/vendor/fflate-MIT.txt',
 ]);
 const EXCLUDED_FILES = new Set([
   'archify/package-lock.json',

@@ -39,6 +39,12 @@ jobs:
         working-directory: archify
         env:
           ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+      - name: Node developer-guide browser acceptance must pass
+        run: node --test test/developer-guide-browser.test.mjs
+        working-directory: archify
+        env:
+          ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          ARCHIFY_CHROME_NO_SANDBOX: '1'
       - name: Tag must match package.json version
         run: |
           pkg_version="$(node -p "require('./archify/package.json').version")"
