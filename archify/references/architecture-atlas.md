@@ -54,88 +54,74 @@ Diagram and node IDs use the existing restricted ID style. The pair `(diagram, n
 - Parent relationship disclosure lists only the host node's authored incoming/outgoing edges. An authored relationship ID enables navigation to that parent relationship. Edges without IDs remain text summaries.
 - Detail membership and shared-object identity are author declarations. Validation checks consistency, not whether the declaration describes the real system. Inspect source evidence when factual ownership matters. Route and reachability searches use only the current member's authored communication graph.
 
-### Canonical developer guides
+### Canonical internal structure
 
-A node developer guide belongs to the canonical component that authors it. A
-reference occurrence must not repeat `developer_guide`, even when the copied body
-would be identical; manifest validation rejects the occurrence at its member
-component path. Any number of valid occurrences may point to one canonical guide.
-If the canonical target has no guide, its occurrences expose no guide action.
-The full authoring shape and evidence boundary are in the
-[authoring contract](authoring-contract.md#architecture-node-developer-guides).
+Internal structure belongs to the canonical component that authors it. A
+reference occurrence must not repeat `internal_structure`; validation rejects
+the occurrence at its member component path. Any number of occurrences may
+resolve to one canonical structure. If the canonical target has no structure,
+its occurrences expose no structure action. The authoring shape and evidence
+boundary are in the
+[authoring contract](authoring-contract.md#architecture-node-internal-structure).
 
-Each member with guides owns exactly one inert `application/json` payload in its
-restored HTML. Atlas navigation metadata carries only a `node -> section kinds`
-inventory and that member's count/byte/hash receipt, never another copy of the
-guide body. Bundle v2 may share identical executable scripts, styles, and fonts,
-but it leaves member JSON data with its owning document. The bundle reader and
-delivery checker reconstruct the requested member and compare its actual guide
-payload, inventory, and receipt before startup.
+Each owning member contains one inert node-indexed payload. Atlas metadata keeps
+only a compact node/domain/item inventory and the member receipt. It never copies
+the structure body. The bundle reader and delivery checker reconstruct the member
+and compare the actual payload, inventory, counts, bytes, and digest before use.
 
 ## Reading and sharing
 
 Click a node to focus it. A node that owns an internal diagram carries a small stacked-layer mark; a shared occurrence carries an outward reference mark. Its node inspector offers one action naming the destination diagram, such as “Open Payment →” or “View definition in System ↗”. Responsibilities stay visible; source evidence, metadata, reachability, relationship tools and a copyable node link live under “Sources and relationships”. Ordinary nodes and multiple selections have no diagram action. These marks remain part of canonical SVG and image exports.
 
-A component with a developer guide adds a bounded quick look to the existing
-Details content: implementation scope, the first three authored interface items,
-and an explicit action to open the full guide. Each interface row shows its
-direction, title, bounded explanation, and first referenced source; the full
-guide and Sources tab retain the complete authored data. This does not add a
-fourth inspector tab. Relationships and the complete source list remain in their
-existing tabs, and a node without a guide keeps its old inspector without an
-empty guide block. A detail-owning node can show both “open internal diagram”
-and “open developer guide”; these remain separate actions.
+A component with internal structure adds an “Internal structure” section inside
+the existing Details tab. It shows a Code structure card, a State fields card,
+or both, with exact item counts. It does not add a fourth inspector tab. A node
+without structure keeps its prior inspector with no empty block. A node may show
+both its independent “open internal diagram” action and structure cards.
 
-Opening a guide replaces the member's graph reading area while the Atlas shell,
-Directory, toolbar, and node context remain available. The hidden graph keeps
-its reading snapshot, is inert, and is removed from the accessibility tree. The
-guide has one document scroll root, one chapter list, and only the authored
-nonempty fixed sections; it does not add nested tabs. Its source actions resolve
-through the same verified source records as the Sources tab. Closing the guide
-restores the graph instead of creating a new Atlas layer.
+Opening a structure card replaces the member's graph reading area with a tree
+and item detail surface. The Atlas shell, Directory, toolbar, current diagram,
+and breadcrumb remain. The hidden graph retains its reading snapshot, becomes
+inert, and leaves the accessibility tree. Returning restores the graph without
+creating an Atlas layer.
 
-Guide addresses extend the existing node address:
+Structure addresses extend the node address:
 
 ```text
 #diagram=payment&focus=controller
-#diagram=payment&focus=controller&inspect=guide
-#diagram=payment&focus=controller&inspect=guide&section=interfaces
+#diagram=payment&focus=controller&inspect=structure&section=code
+#diagram=payment&focus=controller&inspect=structure&section=state&item=status
 ```
 
-`inspect=guide` requires a valid `focus`. `section`, when present, is one of
-`flow`, `interfaces`, `state`, `constraints`, or `change_points`; for a known
-guide it must also occur in that guide's section inventory. Omission selects its
-first authored section. Standalone
-Architecture uses the same `focus`, `inspect`, and `section` fields without a
-fictional `diagram` parameter. A direct link to a valid node that has no guide
-shows the localized “not provided” guide state with routes back to the graph and
-the existing node information. An invalid diagram or focus, a section outside
-the fixed set, or a fixed section missing from a known guide surfaces an address
-error rather than silently choosing another target.
+`inspect=structure` requires a valid `focus`. `section` is `code` or `state` and
+must exist on that node; `item` must belong to the selected section. Omission
+uses the first authored domain and root. Standalone Architecture uses the same
+fields without `diagram`. Invalid or stale addresses show a recoverable error
+and are not silently redirected to another item.
 
 Selecting a graph node and changing inspector tabs retain the existing in-view
-replacement behavior and add no visit. A user-opened graph-to-guide transition
+replacement behavior and add no visit. A user-opened graph-to-structure transition
 prepares the requested surface before commit, then adds exactly one native
-history entry. Chapter changes replace that guide entry, so repeated chapter
-navigation does not grow history. Reopening the same committed guide is a no-op.
-Back restores the originating graph visit and Forward restores the guide's last
-chapter and reading snapshot. “Return to graph” uses that matching source visit
-when it exists; from a cold guide link it removes `inspect` and `section` from
+history entry. Domain, item, and expansion changes replace that entry, so tree
+navigation does not grow history. Reopening the committed structure is a no-op.
+Back restores the originating graph visit and Forward restores the last domain,
+item, expansion, focus, and scroll snapshot. “Return to graph” uses the source visit
+when it exists; from a cold structure link it removes `inspect`, `section`, and `item` from
 the current entry rather than leaving the artifact.
 
-Opening a guide from a reference occurrence resolves to the canonical
-`(diagram, node)` before preparation. A copied guide link therefore names the
-canonical definition and current chapter, while a copied node link keeps the
+Opening structure from a reference occurrence resolves to the canonical
+`(diagram, node)` before preparation. A copied structure link therefore names the
+canonical definition and current domain/item, while a copied node link keeps the
 local occurrence. The source visit remains in history, so Back returns to that
 occurrence with its own relationships, camera, inspector, and scroll state. A
-clipboard failure is reported beside the guide action and does not change the
+clipboard failure is reported beside the structure action and does not change the
 address or navigation state.
 
-The transition commits only after the requested graph or guide surface reports
+The transition commits only after the requested graph or structure surface reports
 ready. A failed explicit open keeps the last committed surface, URL, and history
 entry; late results from a superseded candidate cannot commit. Native history or
 an externally edited hash already owns its target address, so a failed restore
-keeps that address visible with recovery actions. Guide navigation uses the same
+keeps that address visible with recovery actions. Structure navigation uses the same
 one-active/one-candidate limit, export gating, delayed status, and cancellation
 rules as a diagram transition.
 

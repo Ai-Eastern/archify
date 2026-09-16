@@ -51,8 +51,8 @@ jobs:
         env:
           ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
           ARCHIFY_CHROME_NO_SANDBOX: '1'
-      - name: Verify node developer-guide reading, history, accessibility and exports
-        run: node --test test/developer-guide-browser.test.mjs
+      - name: Verify node internal-structure reading, history, accessibility and Atlas rail transitions
+        run: node --test --test-concurrency=1 test/internal-structure-browser.test.mjs test/atlas-workbench-browser.test.mjs
         working-directory: archify
         env:
           ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}

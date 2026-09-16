@@ -39,8 +39,8 @@ jobs:
         working-directory: archify
         env:
           ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
-      - name: Node developer-guide browser acceptance must pass
-        run: node --test test/developer-guide-browser.test.mjs
+      - name: Node internal-structure and Atlas rail browser acceptance must pass
+        run: node --test --test-concurrency=1 test/internal-structure-browser.test.mjs test/atlas-workbench-browser.test.mjs
         working-directory: archify
         env:
           ARCHIFY_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}

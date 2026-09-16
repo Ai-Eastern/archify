@@ -70,50 +70,50 @@ test('a restored folded parent section replays its cached offset when expanded',
   assert.equal(runtime.api.snapshot().scroll.parent, 117, 'The toggle snapshot must not overwrite the restored offset with zero');
 });
 
-test('member focus chooses the visible guide heading and respects persistent workbench focus', () => {
+test('member focus chooses the visible structure heading and respects persistent workbench focus', () => {
   const calls = [];
-  let surface = 'guide', canRestore = true;
+  let surface = 'structure', canRestore = true;
   const runtime = vm.runInNewContext(`({ ${between('    focus() {', '    setDirectoryOpen(open) {')} })`, {
     workbench: { canRestoreFocus: () => canRestore }, frame: {}, title: { focus: () => calls.push('graph') },
-    win: { Archify: { developerGuide: { surface: () => surface, focus: () => calls.push('guide') } } },
+    win: { Archify: { internalStructure: { surface: () => surface, focus: () => calls.push('structure') } } },
   });
   runtime.focus();
-  assert.deepEqual(calls, ['guide'], 'A guide commit must not move focus into its hidden graph');
+  assert.deepEqual(calls, ['structure'], 'A structure commit must not move focus into its hidden graph');
   surface = 'graph'; runtime.focus();
-  assert.deepEqual(calls, ['guide', 'graph']);
-  canRestore = false; surface = 'guide'; runtime.focus();
-  assert.deepEqual(calls, ['guide', 'graph'], 'A persistent directory or toolbar keeps its focus');
+  assert.deepEqual(calls, ['structure', 'graph']);
+  canRestore = false; surface = 'structure'; runtime.focus();
+  assert.deepEqual(calls, ['structure', 'graph'], 'A persistent directory or toolbar keeps its focus');
 });
 
-test('reference guide availability is independent of definition navigation and never suppresses a detail action', () => {
+test('reference structure availability is independent of definition navigation and never suppresses a detail action', () => {
   const selected = { id: 'shared' }, requests = [], actions = { children: [], replaceChildren() { this.children = []; } };
   const globals = {
-    diagram: 'child', shown: null, zh: true, guideTarget: null,
+    diagram: 'child', shown: null, zh: true, structureTarget: null, directoryOpen: false,
     bundle: {
-      members: { child: { title: 'Child', guideNodes: { owner: ['flow'] } }, root: { title: 'Root', guideNodes: { canonical: ['interfaces'] } }, nested: { title: 'Nested' } },
+      members: { child: { title: 'Child', structureNodes: { owner: ['code'] } }, root: { title: 'Root', structureNodes: { canonical: ['code'] } }, nested: { title: 'Nested' } },
       details: [{ from: { diagram: 'child', node: 'owner' }, to: 'nested' }],
       references: [{ occurrence: { diagram: 'child', node: 'shared' }, target: { diagram: 'root', node: 'canonical' } }],
     },
-    win: { Archify: { focus: { active: () => selected.id } } },
+    win: { Archify: { focus: { active: () => selected.id } }, ArchifyAddress: { active: true } },
     chip: { hidden: false }, selectionHint: { dataset: {} }, overview: {}, inspectSelection: { setAttribute() {} },
     detailEmpty: {}, detail: { hidden: false }, sourceEmpty: {}, evidence: { hidden: true }, sourceScope: {},
-    referenceGuide: { hidden: true, dataset: {} }, actions, renderTabs() {}, notifyChange() {},
-    navigate: (...args) => requests.push(args),
+    referenceStructure: { hidden: true, dataset: {} }, actions, renderTabs() {}, notifyChange() {},
+    navigate: (...args) => requests.push(args), showDirectory() {},
     button(label, parent, click) { const action = { label, click, dataset: {} }; parent.children.push(action); return action; },
   };
   const sync = vm.runInNewContext(`${between('  function syncAction()', '  function focusDescriptor()')} syncAction;`, globals);
   sync();
-  assert.equal(globals.referenceGuide.hidden, false, 'An occurrence can open its canonical guide without owning a body');
-  assert.equal(globals.guideTarget.diagram, 'root');
-  assert.equal(globals.guideTarget.focus, 'canonical');
+  assert.equal(globals.referenceStructure.hidden, false, 'An occurrence can open its canonical structure without owning a body');
+  assert.equal(globals.structureTarget.diagram, 'root');
+  assert.equal(globals.structureTarget.focus, 'canonical');
   assert.equal(actions.children.length, 1, 'The existing View definition action remains available');
   assert.equal(actions.children[0].dataset.atlasReference, 'shared');
   selected.id = 'owner'; sync();
-  assert.equal(globals.referenceGuide.hidden, true, 'Canonical nodes use the shared quicklook entry, without a duplicate Atlas button');
+  assert.equal(globals.referenceStructure.hidden, true, 'Canonical nodes use the shared quicklook entry, without a duplicate Atlas button');
   assert.equal(actions.children.length, 1);
-  assert.equal(actions.children[0].dataset.atlasDetail, 'owner', 'A canonical guide owner retains its independent Open subdiagram action');
+  assert.equal(actions.children[0].dataset.atlasDetail, 'owner', 'A canonical structure owner retains its independent Open subdiagram action');
   actions.children[0].click();
   assert.deepEqual(requests, [['nested', undefined]]);
-  delete globals.bundle.members.root.guideNodes; selected.id = 'shared'; sync();
-  assert.equal(globals.referenceGuide.hidden, true, 'A canonical definition with no guide must not create a dead guide entry');
+  delete globals.bundle.members.root.structureNodes; selected.id = 'shared'; sync();
+  assert.equal(globals.referenceStructure.hidden, true, 'A canonical definition with no structure must not create a dead structure entry');
 });

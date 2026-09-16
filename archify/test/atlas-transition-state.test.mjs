@@ -19,8 +19,8 @@ function shell({ hash = 'diagram=root' } = {}) {
     entry: 'root', meta: { title: 'Test atlas', locale: 'zh-CN', visual_preset: 'classic' },
     members: Object.fromEntries(ids.map((id) => [id, {
       title: id, html: '<html></html>', nodes: ['entry', 'exit', 'constructor'], relations: ['entry-exit'], views: ['overview'], parentContext: [],
-      ...(id === 'root' ? { guideNodes: { entry: ['flow', 'interfaces'], exit: ['constraints'] },
-        receipts: { developerGuide: { schemaVersion: 1, nodeCount: 2, itemCount: 3, bytes: 3, sha256: '0'.repeat(64) } } } : {}),
+      ...(id === 'root' ? { structureNodes: { entry: { code: ['entry-root', 'entry-symbol'] }, exit: { state: ['exit-field'] } },
+        receipts: { internalStructure: { schemaVersion: 1, nodeCount: 2, itemCount: 3, relationCount: 0, sourceCount: 2, bytes: 3, sha256: '0'.repeat(64) } } } : {}),
     }])),
     details: [{ from: { diagram: 'root', node: 'entry' }, to: 'child' },
       { from: { diagram: 'child', node: 'entry' }, to: 'grandchild' }],
@@ -340,80 +340,80 @@ test('same-member focus and relationship navigation update the reading address w
   assert.deepEqual(app.active(), [root]);
 });
 
-test('same-member guide navigation prepares a replacement and pushes only after it is ready', () => {
+test('same-member structure navigation prepares a replacement and pushes only after it is ready', () => {
   const app = shell(), root = app.frames[0], href = app.location.href;
-  app.message(root, 'navigate', { focus: 'entry', inspect: 'guide', section: 'interfaces' });
-  const guide = app.frames.at(-1);
-  assert.notEqual(guide, root, 'A new guide surface must not use the graph-only replace shortcut');
+  app.message(root, 'navigate', { focus: 'entry', inspect: 'structure', section: 'code' });
+  const structure = app.frames.at(-1);
+  assert.notEqual(structure, root, 'A new structure surface must not use the graph-only replace shortcut');
   assert.equal(app.location.href, href);
   assert.equal(app.history.length, 1);
   assert.deepEqual(app.active(), [root]);
-  app.bridge(guide);
-  const params = new URL(guide.init.href).hash;
-  assert.match(params, /diagram=root&focus=entry&inspect=guide&section=interfaces/);
-  assert.equal(guide.contentWindow.ArchifyAddress.active, false);
-  app.ready(guide);
-  assert.deepEqual(app.active(), [guide]);
+  app.bridge(structure);
+  const params = new URL(structure.init.href).hash;
+  assert.match(params, /diagram=root&focus=entry&inspect=structure&section=code/);
+  assert.equal(structure.contentWindow.ArchifyAddress.active, false);
+  app.ready(structure);
+  assert.deepEqual(app.active(), [structure]);
   assert.equal(app.history.length, 2);
   assert.equal(app.changes.filter(change => change.type === 'push').length, 1);
 });
 
-test('guide initialization failure and superseded readiness leave the committed surface and history intact', () => {
+test('structure initialization failure and superseded readiness leave the committed surface and history intact', () => {
   for (const outcome of ['error', 'timeout']) {
     const app = shell(), root = app.frames[0], href = app.location.href;
-    app.navigate({ diagram: 'root', focus: 'entry', inspect: 'guide' });
-    const guide = app.bridge(app.frames.at(-1));
-    if (outcome === 'error') app.message(guide, 'error', { message: 'injected guide rendering failure' });
+    app.navigate({ diagram: 'root', focus: 'entry', inspect: 'structure' });
+    const structure = app.bridge(app.frames.at(-1));
+    if (outcome === 'error') app.message(structure, 'error', { message: 'injected structure rendering failure' });
     else app.advance(15000);
     assert.equal(app.location.href, href);
     assert.deepEqual(app.active(), [root]);
     assert.equal(app.history.length, 1);
   }
   const app = shell();
-  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'guide' });
-  const guide = app.bridge(app.frames.at(-1));
+  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'structure' });
+  const structure = app.bridge(app.frames.at(-1));
   app.navigate('child'); const child = app.finish();
-  app.ready(guide);
+  app.ready(structure);
   assert.deepEqual(app.active(), [child]);
   assert.match(app.location.hash, /diagram=child/);
   assert.equal(app.history.length, 2);
 });
 
-test('a reported ready surface must match the pending guide address before it can commit', () => {
+test('a reported ready surface must match the pending structure address before it can commit', () => {
   const app = shell(), root = app.frames[0], href = app.location.href;
-  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'guide' });
-  const guide = app.bridge(app.frames.at(-1));
-  app.ready(guide, { surface: 'graph' });
+  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'structure' });
+  const structure = app.bridge(app.frames.at(-1));
+  app.ready(structure, { surface: 'graph' });
   assert.deepEqual(app.active(), [root]);
   assert.equal(app.location.href, href);
   assert.equal(app.history.length, 1);
   assert.equal(app.error.hidden, false);
 });
 
-test('reopening the current guide is a no-op and chapter changes replace its reading address', () => {
+test('reopening the current structure is a no-op and chapter changes replace its reading address', () => {
   const app = shell();
-  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'guide' });
-  const guide = app.finish(), count = app.frames.length, entry = app.history.state.entryId;
-  for (let index = 0; index < 5; index++) app.message(guide, 'navigate', { focus: 'entry', inspect: 'guide' });
+  app.navigate({ diagram: 'root', focus: 'entry', inspect: 'structure' });
+  const structure = app.finish(), count = app.frames.length, entry = app.history.state.entryId;
+  for (let index = 0; index < 5; index++) app.message(structure, 'navigate', { focus: 'entry', inspect: 'structure' });
   assert.equal(app.frames.length, count);
   assert.equal(app.history.length, 2);
-  app.message(guide, 'navigate', { focus: 'entry', inspect: 'guide', section: 'interfaces' });
+  app.message(structure, 'navigate', { focus: 'entry', inspect: 'structure', section: 'code' });
   assert.equal(app.frames.length, count);
   assert.equal(app.history.state.entryId, entry);
   assert.equal(app.history.length, 2);
-  assert.equal(new URLSearchParams(app.location.hash.slice(1)).get('section'), 'interfaces');
-  app.message(guide, 'navigate', { focus: 'entry', inspect: 'guide' });
-  assert.equal(new URLSearchParams(app.location.hash.slice(1)).get('section'), 'interfaces', 'A repeated open does not reset the last section');
+  assert.equal(new URLSearchParams(app.location.hash.slice(1)).get('section'), 'code');
+  app.message(structure, 'navigate', { focus: 'entry', inspect: 'structure' });
+  assert.equal(new URLSearchParams(app.location.hash.slice(1)).get('section'), 'code', 'A repeated open does not reset the last section');
 });
 
-test('guide addresses reject malformed surfaces and sections but allow a valid node without authored guide content', () => {
+test('structure addresses reject malformed surfaces, sections, and nodes without authored structure content', () => {
   for (const hash of [
-    'diagram=root&inspect=guide',
-    'diagram=root&focus=missing&inspect=guide',
+    'diagram=root&inspect=structure',
+    'diagram=root&focus=missing&inspect=structure',
     'diagram=root&focus=entry&inspect=unknown',
-    'diagram=root&focus=entry&inspect=guide&section=',
-    'diagram=root&focus=entry&inspect=guide&section=unknown',
-    'diagram=root&focus=entry&inspect=guide&section=constraints',
+    'diagram=root&focus=entry&inspect=structure&section=',
+    'diagram=root&focus=entry&inspect=structure&section=unknown',
+    'diagram=root&focus=entry&inspect=structure&section=constraints',
     'diagram=root&focus=entry&section=flow',
   ]) {
     const app = shell({ hash });
@@ -421,65 +421,74 @@ test('guide addresses reject malformed surfaces and sections but allow a valid n
     assert.deepEqual(app.active(), [], hash);
     assert.equal(app.location.hash, `#${hash}`, 'A bad cold address is preserved for recovery');
   }
-  const app = shell({ hash: 'diagram=grandchild&focus=entry&inspect=guide' });
-  assert.equal(app.error.hidden, true, 'The Viewer owns the missing-guide reading state');
-  assert.equal(new URLSearchParams(app.frames[0].init.href.split('#')[1]).get('inspect'), 'guide');
-  const inheritedName = shell({ hash: 'diagram=root&focus=constructor&inspect=guide&section=flow' });
-  assert.equal(inheritedName.error.hidden, true, 'Node IDs must not accidentally read Object.prototype as guide metadata');
+  const app = shell({ hash: 'diagram=grandchild&focus=entry&inspect=structure' });
+  assert.equal(app.error.hidden, false, 'The Atlas rejects a missing-structure deep link before member startup');
+  assert.deepEqual(app.active(), []);
+  const inheritedName = shell({ hash: 'diagram=root&focus=constructor&inspect=structure&section=flow' });
+  assert.equal(inheritedName.error.hidden, false, 'Node IDs must not accidentally read Object.prototype as structure metadata');
 });
 
-test('a canonical guide returns to each occurrence with its original local reading state', () => {
+test('a cold structure link through a reference resolves to the canonical owner', () => {
+  const app = shell({ hash: 'diagram=reference&focus=exit&inspect=structure&section=state&item=exit-field' });
+  const structure = app.finish();
+  assert.equal(structure.title, 'root');
+  assert.match(structure.init.href, /#diagram=root&focus=exit&inspect=structure&section=state&item=exit-field$/);
+  assert.match(app.location.hash, /#diagram=root&focus=exit&inspect=structure&section=state&item=exit-field$/);
+  assert.equal(app.history.length, 1, 'Canonicalizing a cold link replaces the current entry');
+});
+
+test('a canonical structure returns to each occurrence with its original local reading state', () => {
   for (const occurrence of ['child', 'reference']) {
     const app = shell();
     app.navigate(occurrence, 'exit'); const source = app.finish(), sourceEntry = app.history.state.entryId;
     source.reading.camera.scale = 2.25;
-    source.reading.guide = { surface: 'graph', nodeId: 'exit', focus: { id: 'atlas-open-developer-guide' } };
-    source.navigationReading = { tab: 'relationships', scroll: { relationships: 91 }, focus: { id: 'atlas-open-developer-guide' } };
+    source.reading.structure = { surface: 'graph', nodeId: 'exit', focus: { id: 'atlas-open-internal-structure' } };
+    source.navigationReading = { tab: 'relationships', scroll: { relationships: 91 }, focus: { id: 'atlas-open-internal-structure' } };
     app.document.activeElement = source;
-    app.message(source, 'navigate', { focus: 'exit', inspect: 'guide', section: 'constraints' });
-    const guide = app.bridge(app.frames.at(-1));
-    assert.equal(guide.title, 'root');
-    assert.match(guide.init.href, /#diagram=root&focus=exit&inspect=guide&section=constraints$/);
-    app.ready(guide);
-    guide.reading.guide = { surface: 'guide', nodeId: 'exit', section: 'constraints', scrollTop: 180, focus: { section: 'constraints' } };
-    app.message(guide, 'guide-return');
+    app.message(source, 'navigate', { focus: 'exit', inspect: 'structure', section: 'state' });
+    const structure = app.bridge(app.frames.at(-1));
+    assert.equal(structure.title, 'root');
+    assert.match(structure.init.href, /#diagram=root&focus=exit&inspect=structure&section=state$/);
+    app.ready(structure);
+    structure.reading.structure = { surface: 'structure', nodeId: 'exit', section: 'state', scrollTop: 180, focus: { section: 'state' } };
+    app.message(structure, 'structure-return');
     const returned = app.bridge(app.frames.at(-1));
     assert.equal(returned.title, occurrence);
     assert.equal(returned.init.entryId, sourceEntry);
     assert.equal(returned.init.snapshot.camera.scale, 2.25);
     assert.equal(returned.init.snapshot.navigation.tab, 'relationships');
     assert.equal(returned.init.snapshot.navigation.scroll.relationships, 91);
-    returned.contentWindow.Archify.developerGuide = {
-      focus(value) { returned.focusCalls.push({ target: 'guide', value: plain(value) }); },
+    returned.contentWindow.Archify.internalStructure = {
+      focus(value) { returned.focusCalls.push({ target: 'structure', value: plain(value) }); },
     };
     app.ready(returned);
-    assert.deepEqual(returned.focusCalls.at(-1), { target: 'saved', value: { id: 'atlas-open-developer-guide' } });
+    assert.deepEqual(returned.focusCalls.at(-1), { target: 'saved', value: { id: 'atlas-open-internal-structure' } });
     app.history.forward();
     const forwarded = app.bridge(app.frames.at(-1));
     assert.equal(forwarded.title, 'root');
-    assert.equal(forwarded.init.snapshot.guide.scrollTop, 180);
-    assert.match(forwarded.init.href, /inspect=guide&section=constraints/);
-    forwarded.contentWindow.Archify.developerGuide = {
-      focus(value) { forwarded.focusCalls.push({ target: 'guide', value: plain(value) }); app.document.activeElement = forwarded; },
+    assert.equal(forwarded.init.snapshot.structure.scrollTop, 180);
+    assert.match(forwarded.init.href, /inspect=structure&section=state/);
+    forwarded.contentWindow.Archify.internalStructure = {
+      focus(value) { forwarded.focusCalls.push({ target: 'structure', value: plain(value) }); app.document.activeElement = forwarded; },
     };
     const pushes = app.changes.filter(change => change.type === 'push').length;
-    assert.deepEqual(forwarded.focusCalls, [], 'A hidden guide must not receive focus during preparation');
+    assert.deepEqual(forwarded.focusCalls, [], 'A hidden structure must not receive focus during preparation');
     app.ready(forwarded);
-    assert.deepEqual(forwarded.focusCalls, [{ target: 'guide', value: { section: 'constraints' } }]);
+    assert.deepEqual(forwarded.focusCalls, [{ target: 'structure', value: { section: 'state' } }]);
     assert.equal(app.changes.filter(change => change.type === 'push').length, pushes, 'Focus restoration must not add a history entry');
   }
 });
 
-test('restoring guide focus after Forward preserves focus moved to the persistent toolbar', () => {
+test('restoring structure focus after Forward preserves focus moved to the persistent toolbar', () => {
   const app = shell(), root = app.frames[0];
   root.focus();
-  app.message(root, 'navigate', { focus: 'entry', inspect: 'guide', section: 'flow' });
-  const guide = app.finish();
-  guide.reading.guide = { surface: 'guide', nodeId: 'entry', section: 'flow', focus: { section: 'flow' } };
+  app.message(root, 'navigate', { focus: 'entry', inspect: 'structure', section: 'code' });
+  const structure = app.finish();
+  structure.reading.structure = { surface: 'structure', nodeId: 'entry', section: 'code', focus: { section: 'code' } };
   app.history.back(); app.finish();
   app.history.forward(); const forwarded = app.bridge(app.frames.at(-1));
-  forwarded.contentWindow.Archify.developerGuide = {
-    focus(value) { forwarded.focusCalls.push({ target: 'guide', value: plain(value) }); app.document.activeElement = forwarded; },
+  forwarded.contentWindow.Archify.internalStructure = {
+    focus(value) { forwarded.focusCalls.push({ target: 'structure', value: plain(value) }); app.document.activeElement = forwarded; },
   };
   const toolbarControl = app.document.createElement('button');
   app.document.body.append(toolbarControl); toolbarControl.focus();
@@ -489,49 +498,49 @@ test('restoring guide focus after Forward preserves focus moved to the persisten
   assert.deepEqual(app.active(), [forwarded]);
 });
 
-test('returning from a cold guide replaces the surface without navigating outside the atlas', () => {
-  const app = shell({ hash: 'diagram=root&focus=entry&inspect=guide&section=flow' });
-  const guide = app.frames[0], entry = app.history.state.entryId, href = app.location.href;
-  app.message(guide, 'guide-return');
+test('returning from a cold structure replaces the surface without navigating outside the atlas', () => {
+  const app = shell({ hash: 'diagram=root&focus=entry&inspect=structure&section=code' });
+  const structure = app.frames[0], entry = app.history.state.entryId, href = app.location.href;
+  app.message(structure, 'structure-return');
   const graph = app.frames.at(-1);
-  assert.notEqual(graph, guide);
-  assert.equal(app.location.href, href, 'The existing guide remains committed while its graph prepares');
+  assert.notEqual(graph, structure);
+  assert.equal(app.location.href, href, 'The existing structure remains committed while its graph prepares');
   app.finish(graph);
   assert.equal(app.history.state.entryId, entry);
   assert.equal(app.history.length, 1);
   assert.equal(app.location.hash, '#diagram=root&focus=entry');
-  const reordered = shell({ hash: 'focus=entry&inspect=guide&diagram=root' });
-  reordered.message(reordered.frames[0], 'guide-return'); reordered.finish();
+  const reordered = shell({ hash: 'focus=entry&inspect=structure&diagram=root' });
+  reordered.message(reordered.frames[0], 'structure-return'); reordered.finish();
   assert.equal(new URLSearchParams(reordered.location.hash.slice(1)).get('focus'), 'entry', 'Returning respects the focus regardless of fragment key order');
 });
 
-test('duplicate pending graph replacements merge and a graph selection cancels a queued guide', () => {
-  const app = shell({ hash: 'diagram=root&focus=entry&inspect=guide' }), guide = app.frames[0];
+test('duplicate pending graph replacements merge and a graph selection cancels a queued structure', () => {
+  const app = shell({ hash: 'diagram=root&focus=entry&inspect=structure' }), structure = app.frames[0];
   app.navigate('root'); const graph = app.frames.at(-1), count = app.frames.length;
   app.advance(200); app.navigate('root');
   assert.equal(app.frames.length, count);
   app.advance(100);
   assert.match(app.feedback(), /root/, 'A duplicate surface target must not reset feedback timing');
   app.finish(graph);
-  assert.equal(guide.contentWindow.ArchifyAddress.active, false);
+  assert.equal(structure.contentWindow.ArchifyAddress.active, false);
   graph.contentDocument.documentElement.setAttribute('data-atlas-export-busy', '');
-  app.message(graph, 'navigate', { focus: 'entry', inspect: 'guide' });
-  assert.equal(app.frames.length, count, 'Export-busy guide opening must wait without a candidate');
+  app.message(graph, 'navigate', { focus: 'entry', inspect: 'structure' });
+  assert.equal(app.frames.length, count, 'Export-busy structure opening must wait without a candidate');
   app.navigate('root', 'exit');
   graph.contentDocument.documentElement.removeAttribute('data-atlas-export-busy'); app.message(graph, 'export-idle');
   assert.equal(app.frames.length, count);
   assert.equal(new URLSearchParams(app.location.hash.slice(1)).get('focus'), 'exit');
 });
 
-test('directory selection leaves a guide for the graph surface and failure retains the guide', () => {
-  const app = shell({ hash: 'diagram=root&focus=entry&inspect=guide' });
-  const guide = app.frames[0], href = app.location.href;
+test('directory selection leaves a structure for the graph surface and failure retains the structure', () => {
+  const app = shell({ hash: 'diagram=root&focus=entry&inspect=structure' });
+  const structure = app.frames[0], href = app.location.href;
   app.navigate('child'); const child = app.bridge(app.frames.at(-1));
   app.message(child, 'error', { message: 'injected graph failure' });
-  assert.deepEqual(app.active(), [guide]);
+  assert.deepEqual(app.active(), [structure]);
   assert.equal(app.location.href, href);
   app.navigate('root'); const graph = app.frames.at(-1);
-  assert.notEqual(graph, guide, 'The same directory diagram must still exit a guide');
+  assert.notEqual(graph, structure, 'The same directory diagram must still exit a structure');
   app.finish(graph);
   assert.equal(new URLSearchParams(app.location.hash.slice(1)).has('inspect'), false);
   assert.equal(app.history.length, 1, 'A same-diagram graph selection retains its existing replace semantics');

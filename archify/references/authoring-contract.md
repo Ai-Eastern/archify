@@ -238,129 +238,74 @@ GitLab/Gitea/Forgejo/Bitbucket web links are not implemented in this version;
 use local-only until a tested link provider is available. Unknown web providers
 fail with a diagnostic rather than emitting a guessed link.
 
-### Architecture node developer guides
+### Architecture node internal structure
 
-Architecture schema v1 optionally adds `developer_guide` beside a component's
-existing `sources`. Use it for a concise, evidence-linked path into a module;
-leave it out when the available repository evidence cannot support one. A
-component without this field contributes no guide entry and retains the existing
-inspector; a document with no guides emits no guide payload. Other diagram types
-do not accept this field.
+Architecture schema v1 optionally accepts `internal_structure` on a component.
+It describes code organization and state fields owned by that node; it is not a
+diagram, an Atlas member, or a replacement for the node's existing `sources`.
+Other diagram types reject the field. Omit it when the repository cannot support
+the facts.
 
 ```json
 {
   "id": "workflow-engine",
   "type": "backend",
   "label": "Dynamic Workflow",
-  "sources": [
-    {
-      "id": "workflow-entry",
-      "role": "registration",
-      "path": "extensions/workflows/index.ts",
-      "line": 1123
-    },
-    {
-      "id": "workflow-sandbox-call",
-      "role": "callsite",
-      "path": "extensions/workflows/index.ts",
-      "line": 2057,
-      "symbol": "runWorkflowSandbox"
-    }
-  ],
-  "developer_guide": {
-    "implementation_scope": "repository",
-    "summary": {
-      "text": "Registers the workflow tool and passes prepared scripts to the sandbox.",
-      "source_refs": ["workflow-entry", "workflow-sandbox-call"]
-    },
-    "sections": [
-      {
-        "kind": "interfaces",
-        "items": [
-          {
-            "id": "workflow-tool",
-            "title": "workflow",
-            "code": "workflow({ script, args?, background? })",
-            "direction": "provided",
-            "text": "Accepts a script and optional execution arguments.",
-            "source_refs": ["workflow-entry"]
-          }
-        ]
-      }
+  "internal_structure": {
+    "sources": [
+      { "id": "engine", "role": "definition", "path": "src/engine.ts", "symbol": "WorkflowEngine" },
+      { "id": "read-status", "role": "callsite", "path": "src/engine.ts", "line": 84 }
+    ],
+    "items": [
+      { "id": "src", "domain": "code", "kind": "directory", "label": "src", "summary": "Workflow runtime sources." },
+      { "id": "engine-class", "domain": "code", "kind": "class", "label": "WorkflowEngine", "parent": "src", "signature": "class WorkflowEngine", "summary": "Runs workflows.", "source_refs": ["engine"] },
+      { "id": "execution", "domain": "state", "kind": "group", "label": "Execution", "summary": "Current workflow execution." },
+      { "id": "status", "domain": "state", "kind": "field", "label": "status", "parent": "execution", "value_type": "WorkflowStatus", "summary": "Current lifecycle state.", "source_refs": ["engine"] }
+    ],
+    "relations": [
+      { "id": "engine-reads-status", "from": "engine-class", "to": "status", "kind": "reads", "source_refs": ["read-status"] }
     ]
   }
 }
 ```
 
-The authored shape is deliberately bounded:
+`sources` is a component-local evidence register. Each source requires a unique
+`id`, a repository role, and a path. Its optional line range and symbol use the
+same pinned repository checks as ordinary component sources. A structure requires
+`meta.repository.url`, a 40-character revision, and a matching `--repo-root`.
 
-- `implementation_scope` is `repository`, `external`, or `generated`.
-  `summary` requires `text` of 1–240 characters and one to three
-  `source_refs`. A guide contains one to five nonempty sections, in author
-  order, with at most one section of each fixed kind: `flow`, `interfaces`,
-  `state`, `constraints`, and `change_points`.
-- `flow` contains 3–7 items, `interfaces` contains 1–6, and each other section
-  contains 1–5. Every item requires a component-local stable `id`, `title` of
-  1–80 characters, `text` of 1–280 characters, and one to three
-  `source_refs`. Item IDs are unique across that component's guide. A source
-  reference may occur only once in one fact.
-- An interface item also requires `direction`: `provided`, `required`,
-  `bidirectional`, or `observed`. Its optional `code` is 1–200 characters.
-  Other section kinds reject `direction` and `code`. Every guide, summary,
-  section, and item object rejects fields outside the schema; do not author
-  Markdown, HTML, custom sections, tabs, panels, placement, or viewport data.
-- `id`, `role`, and `symbol` remain optional on a legacy source. Any authored
-  source ID is unique within its component, including when that component has no
-  guide; another component may reuse the same local ID. A `symbol`, when present,
-  contains 1–200 characters and no control character. Every guide reference
-  resolves to a `sources[].id` on its own component and that source has one of
-  these roles: `definition`, `export`, `registration`, `callsite`, `guard`,
-  `test`, `schema`, or `documentation`. The existing limit of three sources per
-  component still applies. `provided` needs an `export` or `registration`;
-  `required` and `observed` need a `callsite` or `registration`.
-  `bidirectional` needs two different source IDs, one supporting the provided
-  side and one supporting the required/observed side.
-- A guide requires pinned `meta.repository` metadata. Commands that verify or
-  render it therefore also require the matching `--repo-root`. This does not add
-  a repository requirement to an old architecture that has neither repository
-  evidence nor a guide; an old document that already declares repository
-  evidence keeps the existing requirement.
+`items` share one ID namespace and preserve author order. `domain` is `code` or
+`state`. Code kinds are `directory`, `file`, `class`, `interface`, `type`,
+`function`, and `method`; state kinds are `group` and `field`. A field requires
+`value_type`. Code symbols may carry `signature`. Labels are at most 80
+characters, summaries at most 240, and signatures/value types at most 200.
 
-Keep the guide selective. The compiled, HTML-safe guide object for one node is
-limited to 4096 UTF-8 bytes. The actual chunked JSON text written inside one
-member's inert `archify-developer-guide-data` script is limited to 65,536 bytes;
-an Atlas limits the sum of those per-member script-text byte counts to 131,072.
-The renderer keeps author order, converts the presentation payload to camel-case
-fields, and writes one node-indexed payload outside the canonical SVG. Each
-payload line is bounded to 8192 UTF-8 bytes. See the
-[delivery contract](delivery-contract.md#developer-guide-delivery-evidence) for
-the receipt measured from those emitted bytes.
+`parent` forms a same-domain, single-parent tree. Every nonempty domain has a
+root and every item must be reachable without self-parenting, orphaning, cycles,
+or cross-domain parents. `directory` and `group` are source-optional containers;
+every other item has one to three local `source_refs`.
 
-Treat evidence checks as three distinct claims. Schema and compiler checks prove
-the bounded structure, local reference resolution, and the declared role mix.
-Repository verification proves the origin, pinned commit, blob, path, selected
-line range, and optional symbol location. For an identifier-shaped `symbol`, the
-verifier requires an exact identifier token in the authored range (or the whole
-blob when no range is authored); other symbols use a literal substring match.
-This is location evidence, not AST declaration recognition, public-interface
-discovery, or behavioral proof. Source `role` is authored metadata, so a valid
-direction/role combination does not establish that the role was described
-correctly.
+Relations connect local items and use `imports`, `calls`, `uses`, `creates`,
+`reads`, or `writes`. Cross-domain code-to-state reads and writes are allowed.
+Every relation has one to three source references. Behavioral relations such as
+calls, reads, writes, and creates require evidence roles that can support the
+claim and still require independent semantic review.
 
-Independently review each summary and item against its pinned source before
-claiming the guide is semantically correct. Do not derive a code symbol from a
-node label, turn a definition into a public interface without export or
-registration evidence, or state retry, concurrency, cancellation, ordering,
-ownership, persistence, or failure guarantees without supporting implementation,
-guard, or test evidence. For `external`, describe only the integration surface
-or call-side behavior visible in the pinned repository. For `generated`, prefer
-schema or generator evidence. Changing `meta.repository.revision` requires all
-source locations and claims to be reviewed again.
+One node is limited to 64 sources, 64 items, 96 relations, tree depth 8, and
+64 KiB of HTML-safe compiled data. One Architecture member is limited to 256
+KiB and an Atlas total to 512 KiB. Payload lines are limited to 8192 bytes;
+limits fail with an exact JSON path and never truncate content.
 
-Guide and source prose is plain authored text and is not translated by the
-Viewer. Renderer-owned labels follow `meta.locale`. In `local-only`, relative
-paths, ranges, roles, and symbols remain readable, while the payload and DOM omit
-remote source links and the local repository root.
+Repository verification proves a pinned location, range, and optional symbol.
+It does not prove the authored kind, summary, or runtime relationship. Review
+those statements independently. The Viewer labels this distinction as verified
+source location versus Agent-authored interpretation. Authored text remains
+plain text. `local-only` exposes no remote link or absolute repository root.
+
+The Viewer projects the same items into “Code structure” and “State fields”. It
+does not inspect source files or infer dependencies at runtime. See the
+[delivery contract](delivery-contract.md#internal-structure-delivery-evidence)
+for the compiled payload and receipt.
 
 ## Hand-placed fallback
 

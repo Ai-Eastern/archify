@@ -98,75 +98,69 @@ test('Node Finder searches and presents the same passport facts', () => {
   assert.match(html, /meta\.title = \[viewerKindLabel\(item\.type\), item\.id, item\.context, item\.sublabel, item\.tag\]\.filter\(Boolean\)\.join\(' \\u00b7 '\)/);
 });
 
-test('developer guide projection is bounded, text-only, and preserves native history semantics', () => {
-  assert.match(focusSource, /interfaceSection\.items\.slice\(0, 3\)/);
+test('internal structure projection is text-only and preserves native history semantics', () => {
   assert.match(focusSource, /detail\.after\(quicklook\)/);
-  assert.match(focusSource, /textElement\('h2', 'node-guide-title'/);
-  assert.doesNotMatch(focusSource, /textElement\('h1'/);
+  assert.match(focusSource, /textElement\('h2', 'node-structure-title'/);
+  assert.match(focusSource, /textElement\('ul', 'node-structure-tree'/);
+  assert.match(focusSource, /structureBody = textElement\('div', 'node-structure-body'/);
   assert.doesNotMatch(focusSource, /\.innerHTML\s*=/);
-  assert.match(focusSource, /history\.pushState\(guideEntry, '', url\)/);
-  assert.match(focusSource, /activateGuide\(id, section, \{ emitReady: false, emitError: false \}\)[\s\S]+?return surfaceReady\.then\(function \(\) \{[\s\S]+?history\.pushState\(guideEntry, '', url\)/);
+  assert.match(focusSource, /history\.pushState\(structureEntry, '', url\)/);
+  assert.match(focusSource, /renderStructure\(id, section, requestedItem\)[\s\S]+?return surfaceReady\.then\(function \(\) \{[\s\S]+?history\.pushState\(structureEntry, '', url\)/);
   assert.match(focusSource, /pendingOpen = \{ revision: expectedRevision, trigger: trigger \}/);
-  assert.match(focusSource, /if \(pendingOpen\) \{[\s\S]+?deactivateGuide\(\{ restoreFocus: false \}\)[\s\S]+?trigger\.focus/);
-  assert.match(focusSource, /deactivateGuide\(\{ restoreFocus: false, restoreScroll: true \}\)[\s\S]+?userError\(id, error\)/);
-  assert.match(focusSource, /ArchifyAddress\.replaceState\(history\.state, '', url\)/);
-  assert.match(focusSource, /ArchifyAddress\.send\('navigate', \{ focus: id, inspect: 'guide', section: section \}\)/);
-  assert.match(focusSource, /ArchifyAddress\.send\('guide-return'\)/);
-  assert.match(focusSource, /renderError\(id, 'viewer\.developerGuide\.empty', 'empty'\);[\s\S]+?empty: true/);
+  assert.match(focusSource, /deactivateStructure\(\{ restoreFocus: false, restoreScroll: true \}\)[\s\S]+?userError\(id, error\)/);
+  assert.match(focusSource, /ArchifyAddress\.send\('navigate', \{ focus: id, inspect: 'structure', section: section, item: requestedItem/);
+  assert.match(focusSource, /ArchifyAddress\.send\('structure-return'\)/);
+  assert.match(focusSource, /renderError\(id, 'viewer\.internalStructure\.empty', 'empty'\);[\s\S]+?empty: true/);
   assert.match(focusSource, /graphState\.forEach\(hideElement\)/);
   assert.match(focusSource, /state\.element\.setAttribute\('aria-hidden', 'true'\)/);
-  assert.match(focusSource, /currentSurface === 'guide' && currentNodeId === id[\s\S]+?return Promise\.resolve\(true\)/);
+  assert.match(focusSource, /currentSurface === 'structure' && currentNodeId === id[\s\S]+?return Promise\.resolve\(true\)/);
 });
 
-test('standalone developer-guide entries carry exact-address reading snapshots', () => {
+test('standalone internal-structure entries carry exact-address reading snapshots', () => {
   const start = focusSource.indexOf('      function standaloneHistoryState(');
   const end = focusSource.indexOf('      function scheduleStandaloneReadingSave()', start);
   assert.ok(start >= 0 && end > start, 'standalone history helpers remain independently testable');
   const helpers = vm.runInNewContext(`(() => {\n${focusSource.slice(start, end)}\nreturn { standaloneHistoryState, storedStandaloneReading };\n})()`);
-  const reading = { surface: 'graph', nodeId: 'controller', scrollTop: 91, focus: { id: 'btn-open-developer-guide' } };
+  const reading = { surface: 'graph', nodeId: 'controller', scrollTop: 91, focus: { id: 'focus-internal-structure' } };
   const state = helpers.standaloneHistoryState({ owner: 'kept' }, 'graph', 'https://example.test/map#focus=controller', 'controller', null, reading);
   assert.equal(state.owner, 'kept');
-  assert.deepEqual(JSON.parse(JSON.stringify(state.archifyDeveloperGuide)), {
-    surface: 'graph',
-    href: 'https://example.test/map#focus=controller',
-    nodeId: 'controller',
-    graphHref: null,
-    reading,
+  assert.deepEqual(JSON.parse(JSON.stringify(state.archifyInternalStructure)), {
+    surface: 'graph', href: 'https://example.test/map#focus=controller', nodeId: 'controller', graphHref: null, reading,
   });
-  assert.deepEqual(
-    helpers.storedStandaloneReading(state, 'https://example.test/map#focus=controller'),
-    reading,
-  );
-  assert.equal(
-    helpers.storedStandaloneReading(state, 'https://example.test/map#focus=other'),
-    null,
-    'a stale entry snapshot must never overwrite a different deep link',
-  );
+  assert.deepEqual(helpers.storedStandaloneReading(state, 'https://example.test/map#focus=controller'), reading);
+  assert.equal(helpers.storedStandaloneReading(state, 'https://example.test/map#focus=other'), null);
 });
 
-test('standalone developer-guide history commits only after preparation and restores traversed entries', () => {
+test('standalone internal-structure history commits after preparation and restores traversed entries', () => {
   assert.match(focusSource,
-    /return surfaceReady\.then\(function \(\) \{[\s\S]+?history\.replaceState\(graphEntry[\s\S]+?history\.pushState\(guideEntry/,
-    'the prepared graph entry is snapshotted before the one guide push');
+    /return surfaceReady\.then\(function \(\) \{[\s\S]+?history\.replaceState\(graphEntry[\s\S]+?history\.pushState\(structureEntry/);
   assert.match(focusSource, /window\.addEventListener\('popstate', syncStandaloneHistoryWithoutUnhandledRejection\)/);
   assert.match(focusSource,
-    /expectedRevision = \+\+standaloneSyncRevision[\s\S]+?expectedHref = location\.href[\s\S]+?storedStandaloneReading\(history\.state, expectedHref\)[\s\S]+?syncAddress\(\)[\s\S]+?expectedRevision !== standaloneSyncRevision \|\| location\.href !== expectedHref[\s\S]+?restore\(reading/,
-    'a superseded history restore cannot reactivate the previous surface');
+    /expectedRevision = \+\+standaloneSyncRevision[\s\S]+?expectedHref = location\.href[\s\S]+?storedStandaloneReading\(history\.state, expectedHref\)[\s\S]+?syncAddress\(\)[\s\S]+?expectedRevision !== standaloneSyncRevision \|\| location\.href !== expectedHref[\s\S]+?restore\(reading/);
   assert.match(focusSource, /showSection[\s\S]+?replaceStandaloneReading\(url\)/);
   assert.match(focusSource, /history\.back\(\)[\s\S]+?return true/);
 });
 
-test('keyboard chapter activation transfers visible focus to the destination heading', () => {
-  assert.match(focusSource, /event\.detail === 0[\s\S]+?node-guide-heading-[\s\S]+?focus\(\{ preventScroll: true \}\)/);
-  assert.match(focusSource, /heading\.id = 'node-guide-heading-' \+ section\.kind[\s\S]+?heading\.tabIndex = -1/);
-  assert.match(focusSource, /\.node-guide-section>h2:focus-visible/);
+test('structure tree exposes keyboard navigation and selection', () => {
+  assert.match(focusSource, /rootList\.setAttribute\('role', 'tree'\)/);
+  assert.match(focusSource, /button\.setAttribute\('role', 'treeitem'\)/);
+  assert.match(focusSource, /event\.key === 'ArrowDown'/);
+  assert.match(focusSource, /event\.key === 'ArrowUp'/);
+  assert.match(focusSource, /event\.key === 'ArrowLeft'/);
+  assert.match(focusSource, /event\.key === 'ArrowRight'/);
+  assert.match(focusSource, /event\.key === 'Enter' \|\| event\.key === ' '/);
 });
 
-test('mobile developer guide controls keep a 44px hit target in both axes', () => {
-  assert.match(
-    focusSource,
-    /\.node-guide-actions button,\.node-guide-open,\.node-guide-source,\.node-guide-toc a\{min-width:44px;min-height:44px\}/,
-  );
+test('internal structure controls keep a 44px hit target at every viewport', () => {
+  for (const selector of [
+    '\\.node-structure-entry',
+    '\\.node-structure-actions button',
+    '\\.node-structure-mode',
+    '\\.node-structure-treeitem',
+    '\\.node-structure-source',
+  ]) {
+    assert.match(focusSource, new RegExp(`${selector}\\{[^}]*min-height:44px`));
+  }
 });
 
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));

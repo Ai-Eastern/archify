@@ -93,7 +93,9 @@ function sourceContainsSymbol(content, symbol) {
 export function hasRepositoryEvidence(diagramType, diagram) {
   if (diagramType !== 'architecture') return false;
   const components = Array.isArray(diagram?.components) ? diagram.components : [];
-  return Boolean(diagram?.meta?.repository) || components.some((component) => Array.isArray(component?.sources) && component.sources.length);
+  return Boolean(diagram?.meta?.repository) || components.some((component) =>
+    (Array.isArray(component?.sources) && component.sources.length) ||
+    (Array.isArray(component?.internal_structure?.sources) && component.internal_structure.sources.length));
 }
 
 export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
@@ -186,10 +188,20 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
   let referenceCount = 0;
   const components = Array.isArray(diagram.components) ? diagram.components : [];
   for (const [componentIndex, component] of components.entries()) {
-    if (!Array.isArray(component.sources) || component.sources.length === 0) continue;
+    const authoredSources = [
+      ...(Array.isArray(component.sources) ? component.sources.map((authored, sourceIndex) => ({
+        authored,
+        sourcePath: `/components/${componentIndex}/sources/${sourceIndex}`,
+      })) : []),
+      ...(Array.isArray(component.internal_structure?.sources) ? component.internal_structure.sources.map((authored, sourceIndex) => ({
+        authored,
+        sourcePath: `/components/${componentIndex}/internal_structure/sources/${sourceIndex}`,
+      })) : []),
+    ];
+    if (!authoredSources.length) continue;
     const verified = [];
-    for (const [sourceIndex, authored] of component.sources.entries()) {
-      const where = `/components/${componentIndex}/sources/${sourceIndex}/path`;
+    for (const { authored, sourcePath } of authoredSources) {
+      const where = `${sourcePath}/path`;
       const source = {
         ...(authored.id ? { id: authored.id } : {}),
         ...(authored.role ? { role: authored.role } : {}),
@@ -200,14 +212,14 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
         ...(authored.label ? { label: authored.label } : {}),
       };
       if (source.endLine && !source.line) {
-        evidenceFailure('repository-evidence/line-required', `/components/${componentIndex}/sources/${sourceIndex}/end_line requires line.`, {
-          subject: { path: `/components/${componentIndex}/sources/${sourceIndex}/end_line`, componentId: component.id },
+        evidenceFailure('repository-evidence/line-required', `${sourcePath}/end_line requires line.`, {
+          subject: { path: `${sourcePath}/end_line`, componentId: component.id },
           supportedFixes: ['add line or remove end_line'],
         });
       }
       if (source.endLine && source.endLine < source.line) {
-        evidenceFailure('repository-evidence/line-range-invalid', `/components/${componentIndex}/sources/${sourceIndex}/end_line must be greater than or equal to line.`, {
-          subject: { path: `/components/${componentIndex}/sources/${sourceIndex}`, componentId: component.id },
+        evidenceFailure('repository-evidence/line-range-invalid', `${sourcePath}/end_line must be greater than or equal to line.`, {
+          subject: { path: sourcePath, componentId: component.id },
           evidence: { line: source.line, endLine: source.endLine },
           supportedFixes: ['use an end_line greater than or equal to line'],
         });
@@ -222,8 +234,8 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
         });
       }
       if (source.symbol && (CONTROL_CHARACTER_RE.test(source.symbol) || source.symbol !== source.symbol.trim())) {
-        evidenceFailure('repository-evidence/symbol-invalid', `/components/${componentIndex}/sources/${sourceIndex}/symbol must be printable and have no leading or trailing whitespace.`, {
-          subject: { path: `/components/${componentIndex}/sources/${sourceIndex}/symbol`, componentId: component.id },
+        evidenceFailure('repository-evidence/symbol-invalid', `${sourcePath}/symbol must be printable and have no leading or trailing whitespace.`, {
+          subject: { path: `${sourcePath}/symbol`, componentId: component.id },
           supportedFixes: ['use one printable source symbol or remove the optional symbol'],
         });
       }
@@ -237,8 +249,8 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
         const lineCount = sourceLineCount(content.stdout);
         const requestedLine = source.endLine || source.line;
         if (requestedLine > lineCount) {
-          evidenceFailure('repository-evidence/line-out-of-range', `/components/${componentIndex}/sources/${sourceIndex} requests line ${requestedLine}, but ${source.path} has ${lineCount} lines at revision ${revision}.`, {
-            subject: { path: `/components/${componentIndex}/sources/${sourceIndex}`, componentId: component.id },
+          evidenceFailure('repository-evidence/line-out-of-range', `${sourcePath} requests line ${requestedLine}, but ${source.path} has ${lineCount} lines at revision ${revision}.`, {
+            subject: { path: sourcePath, componentId: component.id },
             evidence: { sourcePath: source.path, requestedLine, lineCount, revision },
             supportedFixes: ['use a line range that exists at the pinned revision'],
           });
@@ -249,8 +261,8 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
             ? lines.slice(source.line - 1, source.endLine || source.line).join('\n')
             : content.stdout;
           if (!sourceContainsSymbol(selected, source.symbol)) {
-            evidenceFailure('repository-evidence/symbol-missing', `/components/${componentIndex}/sources/${sourceIndex}/symbol was not found in the selected source range at revision ${revision}.`, {
-              subject: { path: `/components/${componentIndex}/sources/${sourceIndex}/symbol`, componentId: component.id },
+            evidenceFailure('repository-evidence/symbol-missing', `${sourcePath}/symbol was not found in the selected source range at revision ${revision}.`, {
+              subject: { path: `${sourcePath}/symbol`, componentId: component.id },
               evidence: { sourcePath: source.path, symbol: source.symbol, line: source.line || null, endLine: source.endLine || source.line || null, revision },
               supportedFixes: ['correct the symbol or select a pinned source range that contains it'],
             });

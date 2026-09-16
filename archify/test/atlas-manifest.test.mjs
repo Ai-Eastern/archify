@@ -32,17 +32,16 @@ function fixture(t) {
   } };
 }
 
-function authorGuide(f, diagramId, nodeId = 'redis') {
+function authorStructure(f, diagramId, nodeId = 'redis') {
   const diagram = structuredClone(f.diagram);
   const node = diagram.components.find((component) => component.id === nodeId);
-  node.sources = [{ id: `${nodeId}-definition`, role: 'definition', path: `src/${nodeId}.js` }];
-  node.developer_guide = {
-    implementation_scope: 'repository',
-    summary: { text: `${nodeId} canonical behavior.`, source_refs: [`${nodeId}-definition`] },
-    sections: [{
-      kind: 'constraints',
-      items: [{ id: `${nodeId}-constraint`, title: 'Ownership', text: 'Keep one canonical owner.', source_refs: [`${nodeId}-definition`] }],
-    }],
+  node.internal_structure = {
+    sources: [{ id: `${nodeId}-definition`, role: 'definition', path: `src/${nodeId}.js` }],
+    items: [
+      { id: `${nodeId}-root`, domain: 'code', kind: 'directory', label: 'src', summary: `${nodeId} canonical structure.` },
+      { id: `${nodeId}-symbol`, domain: 'code', kind: 'function', label: nodeId, parent: `${nodeId}-root`, summary: 'Canonical implementation.', source_refs: [`${nodeId}-definition`] },
+    ],
+    relations: [],
   };
   fs.writeFileSync(path.join(f.directory, `${diagramId}.json`), JSON.stringify(diagram));
 }
@@ -73,26 +72,26 @@ test('atlas allows a lone root and mutual references to canonical definitions', 
   assert.equal(f.run().members.size, 1);
 });
 
-test('atlas rejects a developer guide on a reference occurrence at its exact member path', (t) => {
+test('atlas rejects internal structure on a reference occurrence at its exact member path', (t) => {
   const f = fixture(t);
-  authorGuide(f, 'payment');
+  authorStructure(f, 'payment');
   assert.throws(() => f.run(), (error) => {
-    const item = error.archifyDiagnostics?.find((diagnostic) => diagnostic.code === 'atlas/reference-guide');
+    const item = error.archifyDiagnostics?.find((diagnostic) => diagnostic.code === 'atlas/reference-structure');
     assert.ok(item);
     assert.deepEqual(item.subject, {
       diagram: 'payment',
       node: 'redis',
-      path: '/components/2/developer_guide',
+      path: '/components/2/internal_structure',
     });
-    assert.ok(item.supportedFixes.some((fix) => fix.includes('/components/2/developer_guide')));
+    assert.ok(item.supportedFixes.some((fix) => fix.includes('/components/2/internal_structure')));
     assert.ok(item.supportedFixes.some((fix) => fix.includes('system/redis')));
     return true;
   });
 });
 
-test('atlas keeps one canonical guide when two occurrences reference the same definition', (t) => {
+test('atlas keeps one canonical internal structure when two occurrences reference the same definition', (t) => {
   const f = fixture(t);
-  authorGuide(f, 'system');
+  authorStructure(f, 'system');
   const frozen = f.run();
   const canonicalTargets = new Set(frozen.manifest.references.map(({ target }) => `${target.diagram}/${target.node}`));
 
@@ -101,14 +100,14 @@ test('atlas keeps one canonical guide when two occurrences reference the same de
     { occurrence: { diagram: 'payment', node: 'redis' }, target: { diagram: 'system', node: 'redis' } },
     { occurrence: { diagram: 'orders', node: 'redis' }, target: { diagram: 'system', node: 'redis' } },
   ]);
-  assert.equal(frozen.members.get('system').nodes.get('redis').developer_guide.summary.text, 'redis canonical behavior.');
-  assert.equal(frozen.members.get('payment').nodes.get('redis').developer_guide, undefined);
-  assert.equal(frozen.members.get('orders').nodes.get('redis').developer_guide, undefined);
+  assert.equal(frozen.members.get('system').nodes.get('redis').internal_structure.items[0].summary, 'redis canonical structure.');
+  assert.equal(frozen.members.get('payment').nodes.get('redis').internal_structure, undefined);
+  assert.equal(frozen.members.get('orders').nodes.get('redis').internal_structure, undefined);
 });
 
 test('atlas still rejects a missing canonical target with an exact repair diagnostic', (t) => {
   const f = fixture(t);
-  authorGuide(f, 'system');
+  authorStructure(f, 'system');
   f.manifest.references[0].target.node = 'missing';
   assert.throws(() => f.run(), (error) => {
     const item = error.archifyDiagnostics?.find((diagnostic) => diagnostic.code === 'atlas/unknown-node');

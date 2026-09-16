@@ -8,16 +8,16 @@ import { validateSchema } from './validator.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveOutputPath } from './output-path.mjs';
 import { throwDiagnosticError } from './diagnostics.mjs';
-import { compileDeveloperGuides, validateGuidedViews, validateRelationshipIds } from './cli.mjs';
+import { compileInternalStructures, validateGuidedViews, validateRelationshipIds } from './cli.mjs';
 import { validateEngineeringProfile } from './engineering-profiles.mjs';
 import { verifyRepositoryEvidence } from './repository-evidence.mjs';
 import { prepareDiagramBrandMarks } from './brand-marks.mjs';
 import {
   applyTemplate,
-  DEVELOPER_GUIDE_ATLAS_BYTES,
-  findDeveloperGuideBudgetContributor,
+  INTERNAL_STRUCTURE_ATLAS_BYTES,
+  findInternalStructureBudgetContributor,
   findHtmlScriptsById,
-  parseDeveloperGuidePayload,
+  parseInternalStructurePayload,
   renderCards,
 } from './utils.mjs';
 import { renderArchitecture } from '../architecture/render-architecture.mjs';
@@ -38,9 +38,9 @@ const deliveryFixes = {
     'bundle-view-inventory': 'rebuild the chapter inventory from the member guided-view data',
     'bundle-parent-context': 'rebuild the parent summary from the owner node and its authored parent relationships',
     'bundle-context': 'rebuild the member bridge context from the validated atlas references',
-    'bundle-guide-data': 'restore the single compiled developer guide payload and rebuild the member',
-    'bundle-guide-inventory': 'rebuild guide node and section inventories from the member payload',
-    'bundle-guide-receipt': 'recompute developer guide counts and byte receipts from the actual member payload',
+    'bundle-structure-data': 'restore the single compiled internal structure payload and rebuild the member',
+    'bundle-structure-inventory': 'rebuild internal structure node and item inventories from the member payload',
+    'bundle-structure-receipt': 'recompute internal structure counts and byte receipts from the actual member payload',
     'bundle-evidence': 'rebuild source evidence metadata from the verified member document',
 };
 
@@ -85,37 +85,36 @@ function checkSourceEvidence(member, id) {
   if (!isDeepStrictEqual(actual, member.evidence)) reject('bundle-evidence', `Member ${id} source evidence metadata differs from its document.`, { diagram: id }, { expected: actual || null, actual: member.evidence || null });
 }
 
-function checkDeveloperGuide(member, id) {
-  const scripts = findHtmlScriptsById(member.html, 'archify-developer-guide-data');
+function checkInternalStructure(member, id) {
+  const scripts = findHtmlScriptsById(member.html, 'archify-internal-structure-data');
   if (scripts.length > 1 || (scripts.length && (
     String(scripts[0].attributes.type || '').trim().toLowerCase() !== 'application/json' || !scripts[0].closed
   ))) {
-    reject('bundle-guide-data', `Member ${id} must contain one inert developer guide payload.`, { diagram: id }, { count: scripts.length });
+    reject('bundle-structure-data', `Member ${id} must contain at most one inert internal structure payload.`, { diagram: id }, { count: scripts.length });
   }
   let data;
   let parsed;
   if (scripts.length) {
     try {
-      parsed = parseDeveloperGuidePayload(scripts[0].content);
+      parsed = parseInternalStructurePayload(scripts[0].content);
       data = parsed.payload;
-    } catch (error) { reject('bundle-guide-data', `Member ${id} developer guide data is invalid.`, { diagram: id }, { reason: error.message }); }
+    } catch (error) { reject('bundle-structure-data', `Member ${id} internal structure data is invalid.`, { diagram: id }, { reason: error.message }); }
   }
   const inventory = Object.create(null);
-  let itemCount = 0;
-  for (const [node, guide] of Object.entries(data?.nodes || {})) {
-    const sections = guide?.sections;
-    if (!Array.isArray(sections) || !sections.length || sections.length > 5 ||
-        new Set(sections.map(section => section?.kind)).size !== sections.length || sections.some(section =>
-          !['flow', 'interfaces', 'state', 'constraints', 'change_points'].includes(section?.kind) || !Array.isArray(section.items) || !section.items.length)) {
-      reject('bundle-guide-data', `Member ${id} developer guide sections are invalid.`, { diagram: id, node }, { path: `nodes.${node}.sections` });
+  for (const [node, structure] of Object.entries(data?.nodes || {})) {
+    if (!Array.isArray(structure?.sources) || !structure.sources.length ||
+        !Array.isArray(structure?.items) || !structure.items.length || !Array.isArray(structure?.relations)) {
+      reject('bundle-structure-data', `Member ${id} internal structure collections are invalid.`, { diagram: id, node }, { path: `nodes.${node}` });
     }
-    inventory[node] = sections.map(section => section.kind);
-    itemCount += sections.reduce((count, section) => count + section.items.length, 0);
+    inventory[node] = Object.fromEntries(['code', 'state'].map(domain =>
+      [domain, structure.items.filter(item => item?.domain === domain).map(item => item.id)])
+      .filter(([, items]) => items.length));
   }
-  if (!isDeepStrictEqual({ ...inventory }, member.guideNodes || {})) reject('bundle-guide-inventory', `Member ${id} developer guide inventory differs from its payload.`, { diagram: id }, { expected: inventory, actual: member.guideNodes || {} });
+  if (!isDeepStrictEqual({ ...inventory }, member.structureNodes || {})) reject('bundle-structure-inventory', `Member ${id} internal structure inventory differs from its payload.`, { diagram: id }, { expected: inventory, actual: member.structureNodes || {} });
   if (!scripts.length) return;
-  const receipt = { schemaVersion: 1, nodeCount: parsed.nodeCount, itemCount, ...byteReceipt(scripts[0].content) };
-  if (!isDeepStrictEqual(receipt, member.receipts?.developerGuide)) reject('bundle-guide-receipt', `Member ${id} developer guide receipt differs from its payload.`, { diagram: id }, { expected: receipt, actual: member.receipts?.developerGuide || null });
+  const receipt = { schemaVersion: 1, nodeCount: parsed.nodeCount, itemCount: parsed.itemCount,
+    relationCount: parsed.relationCount, sourceCount: parsed.sourceCount, ...byteReceipt(scripts[0].content) };
+  if (!isDeepStrictEqual(receipt, member.receipts?.internalStructure)) reject('bundle-structure-receipt', `Member ${id} internal structure receipt differs from its payload.`, { diagram: id }, { expected: receipt, actual: member.receipts?.internalStructure || null });
 }
 
 export function unpackAtlas(html) {
@@ -144,7 +143,7 @@ export function unpackAtlas(html) {
     }
     if (!member.check?.ok) reject('bundle-receipt', `Missing successful checker receipt for ${id}.`, { diagram: id }, { expected: { ok: true }, actual: member.check || null });
     checkSourceEvidence(member, id);
-    checkDeveloperGuide(member, id);
+    checkInternalStructure(member, id);
   }
   const manifest = {
     atlas_version: 1, entry: bundle.entry, meta: bundle.meta,
@@ -159,7 +158,7 @@ export function unpackAtlas(html) {
     for (const match of member.html.matchAll(/<g\b([^>]*)>/g)) {
       const attrs = compiledAttributes(match[1]);
       if (attrs['data-node-id']) nodes.set(attrs['data-node-id'], { type: attrs['data-node-kind'], label: attrs['data-node-label'],
-        ...(Object.hasOwn(member.guideNodes || {}, attrs['data-node-id']) ? { developer_guide: true } : {}) });
+        ...(Object.hasOwn(member.structureNodes || {}, attrs['data-node-id']) ? { internal_structure: true } : {}) });
     }
     if (!isDeepStrictEqual([...nodes.keys()], member.nodes)) reject('bundle-node-inventory', `Member ${id} node inventory differs from its SVG.`, { diagram: id }, { expected: [...nodes.keys()], actual: member.nodes });
     const edges = [...member.html.matchAll(/<path\b([^>]*)>/g)].map((match) => compiledAttributes(match[1]))
@@ -231,7 +230,7 @@ export async function deliverAtlas({ input, requestedOutput, quality, repoRoot }
       diagramIds: [...frozen.members.keys()], details: frozen.manifest.details || [],
       references: frozen.manifest.references || [], members: Object.create(null),
     };
-    let atlasDeveloperGuideBytes = 0;
+    let atlasInternalStructureBytes = 0;
     for (const [id, member] of frozen.members) {
       stage = 'render';
       try {
@@ -243,32 +242,32 @@ export async function deliverAtlas({ input, requestedOutput, quality, repoRoot }
         validateGuidedViews('architecture', diagram);
         validateRelationshipIds('architecture', diagram);
         validateEngineeringProfile('architecture', diagram);
-        const developerGuide = compileDeveloperGuides('architecture', diagram);
-        const previousAtlasDeveloperGuideBytes = atlasDeveloperGuideBytes;
-        atlasDeveloperGuideBytes += developerGuide?.receipt.bytes || 0;
-        if (atlasDeveloperGuideBytes > DEVELOPER_GUIDE_ATLAS_BYTES) {
-          const contributor = findDeveloperGuideBudgetContributor(
+        const internalStructure = compileInternalStructures('architecture', diagram);
+        const previousAtlasInternalStructureBytes = atlasInternalStructureBytes;
+        atlasInternalStructureBytes += internalStructure?.receipt.bytes || 0;
+        if (atlasInternalStructureBytes > INTERNAL_STRUCTURE_ATLAS_BYTES) {
+          const contributor = findInternalStructureBudgetContributor(
             diagram.components,
-            developerGuide?.data.nodes,
+            internalStructure?.data.nodes,
             {
-              baseBytes: previousAtlasDeveloperGuideBytes,
-              limit: DEVELOPER_GUIDE_ATLAS_BYTES,
+              baseBytes: previousAtlasInternalStructureBytes,
+              limit: INTERNAL_STRUCTURE_ATLAS_BYTES,
             },
           );
           const componentIndex = contributor?.componentIndex
-            ?? diagram.components.findLastIndex(component => component?.developer_guide);
+            ?? diagram.components.findLastIndex(component => component?.internal_structure);
           const component = diagram.components[componentIndex];
-          throwDiagnosticError(`Atlas developer guide payload exceeds ${DEVELOPER_GUIDE_ATLAS_BYTES} bytes.`, [{
-            code: 'developer-guide/atlas-budget',
+          throwDiagnosticError(`Atlas internal structure payload exceeds ${INTERNAL_STRUCTURE_ATLAS_BYTES} bytes.`, [{
+            code: 'internal-structure/atlas-budget',
             severity: 'error',
-            message: `Atlas developer guide payload is ${atlasDeveloperGuideBytes} bytes; the limit is ${DEVELOPER_GUIDE_ATLAS_BYTES}.`,
+            message: `Atlas internal structure payload is ${atlasInternalStructureBytes} bytes; the limit is ${INTERNAL_STRUCTURE_ATLAS_BYTES}.`,
             subject: {
               diagram: id,
               componentId: component.id,
-              path: `/components/${componentIndex}/developer_guide`,
+              path: `/components/${componentIndex}/internal_structure`,
             },
-            evidence: { bytes: atlasDeveloperGuideBytes, limit: DEVELOPER_GUIDE_ATLAS_BYTES },
-            supportedFixes: ['reduce lower-value member guide content until the Atlas payload fits'],
+            evidence: { bytes: atlasInternalStructureBytes, limit: INTERNAL_STRUCTURE_ATLAS_BYTES },
+            supportedFixes: ['reduce lower-value member internal structure content until the Atlas payload fits'],
           }]);
         }
         const evidence = verifyRepositoryEvidence('architecture', diagram, repoRoot || process.env.ARCHIFY_REPO_ROOT);
@@ -280,7 +279,7 @@ export async function deliverAtlas({ input, requestedOutput, quality, repoRoot }
           title: diagram.meta.title, subtitle: diagram.meta.subtitle,
           svg: renderArchitecture(diagram, { atlasContext }), cards: renderCards(diagram.cards),
           locale: diagram.meta.locale, visualPreset: diagram.meta.visual_preset,
-          guidedViews: diagram.meta.views || [], sourceEvidence: evidence, developerGuide, atlasContext,
+          guidedViews: diagram.meta.views || [], sourceEvidence: evidence, internalStructure, atlasContext,
         });
         stage = 'check';
         const check = checkMember(html, memberDirectory, id);
@@ -294,9 +293,11 @@ export async function deliverAtlas({ input, requestedOutput, quality, repoRoot }
           title: diagram.meta.title, nodes: [...member.nodes.keys()],
           relations: (diagram.connections || []).map((edge) => edge.id).filter(Boolean),
           views: (diagram.meta.views || []).map((view) => view.id), parentContext, html, check,
-          ...(developerGuide ? { guideNodes: Object.fromEntries(Object.entries(developerGuide.data.nodes)
-            .map(([nodeId, guide]) => [nodeId, guide.sections.map((section) => section.kind)])) } : {}),
-          receipts: { source: member.receipts.source, effectiveInput: byteReceipt(effectiveBytes), artifact: byteReceipt(html), ...(developerGuide ? { developerGuide: developerGuide.receipt } : {}) },
+          ...(internalStructure ? { structureNodes: Object.fromEntries(Object.entries(internalStructure.data.nodes)
+            .map(([nodeId, structure]) => [nodeId, Object.fromEntries(['code', 'state'].map(domain =>
+              [domain, structure.items.filter(item => item.domain === domain).map(item => item.id)])
+              .filter(([, items]) => items.length))])) } : {}),
+          receipts: { source: member.receipts.source, effectiveInput: byteReceipt(effectiveBytes), artifact: byteReceipt(html), ...(internalStructure ? { internalStructure: internalStructure.receipt } : {}) },
           ...(evidence ? { evidence } : {}),
         };
       } catch (error) {

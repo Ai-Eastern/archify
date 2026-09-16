@@ -95,12 +95,12 @@ Read Mermaid for topology and meaning, then author fresh Archify JSON; do not me
 
 Read `references/authoring-contract.md` only when you need field enums, spacing math, geometry repair rules, repository evidence, or mode-specific placement.
 
-For an evidence-backed Architecture node quick look or developer guide, read
-[Architecture node developer guides](references/authoring-contract.md#architecture-node-developer-guides)
-before authoring. Pin one repository revision, attach every guide fact to
-component-local source IDs, and keep semantic review distinct from source-location
-verification. In an Atlas, the canonical component alone owns the guide; follow
-[Canonical developer guides](references/architecture-atlas.md#canonical-developer-guides)
+For evidence-backed Architecture node internals, read
+[Architecture node internal structure](references/authoring-contract.md#architecture-node-internal-structure)
+before authoring. Pin one repository revision, attach each item and relation to
+structure-local source IDs, and keep semantic review distinct from source-location
+verification. In an Atlas, the canonical component alone owns the structure; follow
+[Canonical internal structure](references/architecture-atlas.md#canonical-internal-structure)
 for reference navigation and history.
 
 ## Delivery
@@ -123,7 +123,7 @@ Add `--open` only when the user wants an immediate local preview. For an active 
 node bin/archify.mjs preview <type> <input>.json <output>.html --quality showcase
 ```
 
-Never start preview by default. Read `references/delivery-contract.md` when using preview, repository evidence, node developer-guide receipts, export receipts, visual review, or post-commit opening.
+Never start preview by default. Read `references/delivery-contract.md` when using preview, repository evidence, node internal-structure receipts, export receipts, visual review, or post-commit opening.
 
 For Atlas handoff, provide the checked HTML link and a preview image from the final artifact's visual evidence. Keep automatic HTML file-panel opening off; it can impose unnecessary work on the host application. An explicit request to open the result still applies: use the browser unless the user names another surface. Compact packaging reduces artifact bytes; report any host responsiveness measurements separately.
 

@@ -3,9 +3,9 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   applyTemplate,
-  DEVELOPER_GUIDE_MEMBER_BYTES,
-  DEVELOPER_GUIDE_NODE_BYTES,
-  findDeveloperGuideBudgetContributor,
+  findInternalStructureBudgetContributor,
+  INTERNAL_STRUCTURE_MEMBER_BYTES,
+  INTERNAL_STRUCTURE_NODE_BYTES,
   renderCards,
   esc,
   serializeChunkedScriptJson,
@@ -22,15 +22,11 @@ import { resolveLocale, translateMessage } from './i18n.mjs';
 installRendererDiagnosticBoundary();
 
 const outputPathGuards = new Map();
-const GUIDE_DIRECTIONS = {
-  provided: new Set(['export', 'registration']),
-  required: new Set(['callsite', 'registration']),
-  observed: new Set(['callsite', 'registration']),
-};
+const STRUCTURE_RELATION_EVIDENCE_ROLES = new Set(['callsite', 'definition', 'guard', 'schema', 'test']);
 
-function guideDiagnostic(code, message, component, path, evidence, supportedFixes) {
+function structureDiagnostic(code, message, component, path, evidence, supportedFixes) {
   return {
-    code: `developer-guide/${code}`,
+    code: `internal-structure/${code}`,
     severity: 'error',
     message,
     subject: { diagramType: 'architecture', componentId: component.id, path },
@@ -39,158 +35,192 @@ function guideDiagnostic(code, message, component, path, evidence, supportedFixe
   };
 }
 
-function compiledGuide(guide) {
+function compiledStructure(structure) {
   return {
-    implementationScope: guide.implementation_scope,
-    summary: { text: guide.summary.text, sourceRefs: [...guide.summary.source_refs] },
-    sections: guide.sections.map((section) => ({
-      kind: section.kind,
-      items: section.items.map((item) => ({
-        id: item.id,
-        title: item.title,
-        ...(item.code !== undefined ? { code: item.code } : {}),
-        ...(item.direction !== undefined ? { direction: item.direction } : {}),
-        text: item.text,
-        sourceRefs: [...item.source_refs],
-      })),
+    sources: structure.sources.map((source) => ({
+      id: source.id,
+      role: source.role,
+      path: source.path,
+      ...(source.symbol !== undefined ? { symbol: source.symbol } : {}),
+      ...(source.line !== undefined ? { line: source.line } : {}),
+      ...(source.end_line !== undefined ? { endLine: source.end_line } : {}),
+      ...(source.label !== undefined ? { label: source.label } : {}),
+    })),
+    items: structure.items.map((item) => ({
+      id: item.id,
+      domain: item.domain,
+      kind: item.kind,
+      label: item.label,
+      ...(item.parent !== undefined ? { parent: item.parent } : {}),
+      ...(item.signature !== undefined ? { signature: item.signature } : {}),
+      ...(item.value_type !== undefined ? { valueType: item.value_type } : {}),
+      summary: item.summary,
+      ...(item.source_refs !== undefined ? { sourceRefs: [...item.source_refs] } : {}),
+    })),
+    relations: structure.relations.map((relation) => ({
+      id: relation.id,
+      from: relation.from,
+      to: relation.to,
+      kind: relation.kind,
+      ...(relation.label !== undefined ? { label: relation.label } : {}),
+      sourceRefs: [...relation.source_refs],
     })),
   };
 }
 
-export function compileDeveloperGuides(diagramType, diagram) {
+export function compileInternalStructures(diagramType, diagram) {
   if (diagramType !== 'architecture') return null;
   const components = Array.isArray(diagram?.components) ? diagram.components : [];
-  const withGuide = components.filter((component) => component?.developer_guide);
+  const withStructure = components.filter((component) => component?.internal_structure);
   const diagnostics = [];
   const nodes = Object.create(null);
   let itemCount = 0;
-  const sourceOwners = new Map();
-  const sourceMaps = new Map();
+  let relationCount = 0;
+  let sourceCount = 0;
   const componentIds = new Set();
 
   for (const [componentIndex, component] of components.entries()) {
     if (componentIds.has(component.id)) {
-      diagnostics.push(guideDiagnostic('duplicate-component-id', `Component id ${JSON.stringify(component.id)} is duplicated and cannot index developer guide data safely.`, component, `/components/${componentIndex}/id`, { componentId: component.id }, ['give every architecture component a unique id']));
+      diagnostics.push(structureDiagnostic('duplicate-component-id', `Component id ${JSON.stringify(component.id)} is duplicated and cannot index internal structure safely.`, component, `/components/${componentIndex}/id`, { componentId: component.id }, ['give every architecture component a unique id']));
     }
     componentIds.add(component.id);
-    const sourceById = new Map();
-    for (const [sourceIndex, source] of (component?.sources || []).entries()) {
-      if (!source?.id) continue;
-      if (sourceById.has(source.id)) {
-        diagnostics.push(guideDiagnostic('duplicate-source-id', `Source id ${JSON.stringify(source.id)} is duplicated in component ${component.id}.`, component, `/components/${componentIndex}/sources/${sourceIndex}/id`, { sourceId: source.id }, ['give every source in this component a unique id']));
-      } else sourceById.set(source.id, source);
-      const owners = sourceOwners.get(source.id) || new Set();
-      owners.add(component.id);
-      sourceOwners.set(source.id, owners);
-    }
-    sourceMaps.set(component, sourceById);
   }
 
-  if (!withGuide.length) {
-    if (diagnostics.length) throwDiagnosticError(`Developer guide validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
+  if (!withStructure.length) {
+    if (diagnostics.length) throwDiagnosticError(`Internal structure validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
     return null;
   }
 
   if (!diagram.meta?.repository) {
-    diagnostics.push(guideDiagnostic('repository-required', 'Developer guides require /meta/repository pinned to one source revision.', withGuide[0], '/meta/repository', {}, ['add pinned repository metadata or remove developer_guide']));
+    diagnostics.push(structureDiagnostic('repository-required', 'Internal structure requires /meta/repository pinned to one source revision.', withStructure[0], '/meta/repository', {}, ['add pinned repository metadata or remove internal_structure']));
   }
 
   for (const [componentIndex, component] of components.entries()) {
-    const guide = component?.developer_guide;
-    if (!guide) continue;
-    const componentPath = `/components/${componentIndex}`;
-    const sources = Array.isArray(component.sources) ? component.sources : [];
-    const sourceById = sourceMaps.get(component);
-
-    const sectionKinds = new Set();
+    const structure = component?.internal_structure;
+    if (!structure) continue;
+    const basePath = `/components/${componentIndex}/internal_structure`;
+    const sourceById = new Map();
+    for (const [sourceIndex, source] of structure.sources.entries()) {
+      sourceCount += 1;
+      if (sourceById.has(source.id)) diagnostics.push(structureDiagnostic('duplicate-source-id', `Source id ${JSON.stringify(source.id)} is duplicated in the internal structure for component ${component.id}.`, component, `${basePath}/sources/${sourceIndex}/id`, { sourceId: source.id }, ['give every source in this internal_structure a unique id']));
+      else sourceById.set(source.id, source);
+    }
     const itemIds = new Set();
-    function checkRefs(refs, path, direction) {
+    const itemById = new Map();
+    for (const [itemIndex, item] of structure.items.entries()) {
+      itemCount += 1;
+      const itemPath = `${basePath}/items/${itemIndex}`;
+      if (itemIds.has(item.id)) diagnostics.push(structureDiagnostic('duplicate-item-id', `Internal structure item id ${JSON.stringify(item.id)} is duplicated in component ${component.id}.`, component, `${itemPath}/id`, { itemId: item.id }, ['give every internal structure item a unique id']));
+      else {
+        itemIds.add(item.id);
+        itemById.set(item.id, { item, itemIndex });
+      }
+    }
+
+    function checkRefs(refs, path, relationKind) {
       const seen = new Set();
-      const resolved = [];
-      let referencesValid = true;
-      refs.forEach((sourceId, refIndex) => {
+      const roles = [];
+      (refs || []).forEach((sourceId, refIndex) => {
         if (seen.has(sourceId)) {
-          referencesValid = false;
-          diagnostics.push(guideDiagnostic('duplicate-source-ref', `Source ref ${JSON.stringify(sourceId)} is repeated.`, component, `${path}/${refIndex}`, { sourceId }, ['keep each source ref once per guide item']));
+          diagnostics.push(structureDiagnostic('duplicate-source-ref', `Source ref ${JSON.stringify(sourceId)} is repeated.`, component, `${path}/${refIndex}`, { sourceId }, ['keep each source ref once per item or relation']));
           return;
         }
         seen.add(sourceId);
         const source = sourceById.get(sourceId);
         if (!source) {
-          referencesValid = false;
-          const otherOwners = [...(sourceOwners.get(sourceId) || [])].filter((owner) => owner !== component.id);
-          diagnostics.push(guideDiagnostic(
-            otherOwners.length ? 'cross-node-source-ref' : 'unknown-source-ref',
-            otherOwners.length
-              ? `Source ref ${JSON.stringify(sourceId)} belongs to another component and cannot support ${component.id}.`
-              : `Source ref ${JSON.stringify(sourceId)} does not resolve inside component ${component.id}.`,
-            component,
-            `${path}/${refIndex}`,
-            { sourceId, available: [...sourceById.keys()], ...(otherOwners.length ? { otherOwners } : {}) },
-            ['reference a source id declared on the same component'],
-          ));
+          diagnostics.push(structureDiagnostic('unknown-source-ref', `Source ref ${JSON.stringify(sourceId)} does not resolve inside component ${component.id}.`, component, `${path}/${refIndex}`, { sourceId, available: [...sourceById.keys()] }, ['reference a source id declared in this internal_structure']));
           return;
         }
-        if (!source.role) {
-          referencesValid = false;
-          diagnostics.push(guideDiagnostic('source-role-required', `Referenced source ${JSON.stringify(sourceId)} requires a role.`, component, `${componentPath}/sources/${sources.indexOf(source)}/role`, { sourceId }, ['add the source role required by the guide fact']));
-          return;
-        }
-        resolved.push({ id: sourceId, role: source.role });
+        roles.push(source.role);
       });
-      if (!direction || !referencesValid) return;
-      if (direction === 'bidirectional') {
-        const supported = resolved.some((provided) => (
-          GUIDE_DIRECTIONS.provided.has(provided.role)
-          && resolved.some((required) => (
-            required.id !== provided.id && GUIDE_DIRECTIONS.required.has(required.role)
-          ))
-        ));
-        if (!supported) diagnostics.push(guideDiagnostic('direction-evidence', 'A bidirectional interface requires distinct provided and required/observed source evidence.', component, path.replace(/\/source_refs$/, '/direction'), { direction, roles: resolved.map((source) => source.role) }, ['reference one export or registration source and one distinct callsite or registration source']));
-      } else if (!resolved.some((source) => GUIDE_DIRECTIONS[direction]?.has(source.role))) {
-        diagnostics.push(guideDiagnostic('direction-evidence', `Interface direction ${JSON.stringify(direction)} is not supported by its source roles.`, component, path.replace(/\/source_refs$/, '/direction'), { direction, roles: resolved.map((source) => source.role) }, [direction === 'provided' ? 'reference an export or registration source' : 'reference a callsite or registration source']));
+      if (['calls', 'reads', 'writes', 'creates'].includes(relationKind) && roles.length &&
+          !roles.some((role) => STRUCTURE_RELATION_EVIDENCE_ROLES.has(role))) {
+        diagnostics.push(structureDiagnostic('relation-evidence', `Relation ${JSON.stringify(relationKind)} is not supported by its source roles.`, component, path, { kind: relationKind, roles }, ['reference a callsite, definition, guard, schema, or test source']));
       }
     }
 
-    checkRefs(guide.summary.source_refs, `${componentPath}/developer_guide/summary/source_refs`);
-    guide.sections.forEach((section, sectionIndex) => {
-      const sectionPath = `${componentPath}/developer_guide/sections/${sectionIndex}`;
-      if (sectionKinds.has(section.kind)) diagnostics.push(guideDiagnostic('duplicate-section', `Section ${JSON.stringify(section.kind)} is duplicated.`, component, `${sectionPath}/kind`, { kind: section.kind }, ['keep at most one section of each fixed kind']));
-      sectionKinds.add(section.kind);
-      section.items.forEach((item, itemIndex) => {
-        itemCount += 1;
-        const itemPath = `${sectionPath}/items/${itemIndex}`;
-        if (itemIds.has(item.id)) diagnostics.push(guideDiagnostic('duplicate-item-id', `Guide item id ${JSON.stringify(item.id)} is duplicated in component ${component.id}.`, component, `${itemPath}/id`, { itemId: item.id }, ['give every guide item in this component a unique id']));
-        itemIds.add(item.id);
-        checkRefs(item.source_refs, `${itemPath}/source_refs`, section.kind === 'interfaces' ? item.direction : null);
-      });
-    });
+    for (const [itemIndex, item] of structure.items.entries()) {
+      const itemPath = `${basePath}/items/${itemIndex}`;
+      if (item.parent !== undefined) {
+        const parent = itemById.get(item.parent)?.item;
+        if (!parent) diagnostics.push(structureDiagnostic('unknown-parent', `Parent ${JSON.stringify(item.parent)} does not resolve inside component ${component.id}.`, component, `${itemPath}/parent`, { parent: item.parent }, ['reference an item in this internal_structure']));
+        else if (parent.domain !== item.domain) diagnostics.push(structureDiagnostic('cross-domain-parent', 'Internal structure parent and child must use the same domain.', component, `${itemPath}/parent`, { parent: parent.id, parentDomain: parent.domain, domain: item.domain }, ['move the item under a parent in the same domain']));
+      }
+      const container = item.kind === 'directory' || item.kind === 'group';
+      if (!container && (!Array.isArray(item.source_refs) || !item.source_refs.length)) diagnostics.push(structureDiagnostic('source-required', `Internal structure item ${JSON.stringify(item.id)} requires source_refs.`, component, `${itemPath}/source_refs`, { itemId: item.id }, ['add one to three local source references']));
+      checkRefs(item.source_refs, `${itemPath}/source_refs`);
+    }
 
-    const compiled = compiledGuide(guide);
+    for (const [itemIndex, item] of structure.items.entries()) {
+      const seen = new Set([item.id]);
+      let cursor = item;
+      let depth = 0;
+      let cycle = false;
+      while (cursor.parent !== undefined) {
+        if (seen.has(cursor.parent)) {
+          diagnostics.push(structureDiagnostic('parent-cycle', `Internal structure item ${JSON.stringify(item.id)} participates in a parent cycle.`, component, `${basePath}/items/${itemIndex}/parent`, { itemId: item.id, parent: cursor.parent }, ['remove the parent cycle']));
+          cycle = true;
+          break;
+        }
+        seen.add(cursor.parent);
+        depth += 1;
+        const parent = itemById.get(cursor.parent)?.item;
+        if (!parent || parent.domain !== item.domain) break;
+        cursor = parent;
+      }
+      if (!cycle && depth > 8) diagnostics.push(structureDiagnostic('tree-depth', `Internal structure item ${JSON.stringify(item.id)} exceeds depth 8.`, component, `${basePath}/items/${itemIndex}/parent`, { itemId: item.id, depth }, ['flatten the structure tree to eight levels or fewer']));
+    }
+
+    for (const domain of ['code', 'state']) {
+      const domainItems = structure.items.filter((item) => item.domain === domain);
+      if (domainItems.length && !domainItems.some((item) => item.parent === undefined)) diagnostics.push(structureDiagnostic('root-required', `Internal structure domain ${domain} requires at least one root.`, component, `${basePath}/items`, { domain }, ['remove a parent from at least one item in this domain']));
+    }
+
+    const relationIds = new Set();
+    for (const [relationIndex, relation] of structure.relations.entries()) {
+      relationCount += 1;
+      const relationPath = `${basePath}/relations/${relationIndex}`;
+      if (relationIds.has(relation.id)) diagnostics.push(structureDiagnostic('duplicate-relation-id', `Internal structure relation id ${JSON.stringify(relation.id)} is duplicated.`, component, `${relationPath}/id`, { relationId: relation.id }, ['give every relation a unique id']));
+      relationIds.add(relation.id);
+      for (const endpoint of ['from', 'to']) {
+        if (!itemById.has(relation[endpoint])) diagnostics.push(structureDiagnostic('unknown-relation-endpoint', `Relation ${JSON.stringify(relation.id)} has unknown ${endpoint} item ${JSON.stringify(relation[endpoint])}.`, component, `${relationPath}/${endpoint}`, { relationId: relation.id, endpoint: relation[endpoint] }, ['reference an item in this internal_structure']));
+      }
+      const from = itemById.get(relation.from)?.item;
+      const to = itemById.get(relation.to)?.item;
+      if (from && to) {
+        const validDomains = ['reads', 'writes'].includes(relation.kind)
+          ? from.domain === 'code' && to.domain === 'state'
+          : from.domain === 'code' && to.domain === 'code';
+        if (!validDomains) diagnostics.push(structureDiagnostic('relation-domain', `Relation ${JSON.stringify(relation.id)} kind ${JSON.stringify(relation.kind)} has invalid ${from.domain} → ${to.domain} endpoints.`, component, `${relationPath}/kind`, { relationId: relation.id, kind: relation.kind, fromDomain: from.domain, toDomain: to.domain }, ['use reads or writes for code-to-state relations; keep other relations between code items']));
+      }
+      checkRefs(relation.source_refs, `${relationPath}/source_refs`, relation.kind);
+    }
+
+    const compiled = compiledStructure(structure);
     const nodeBytes = Buffer.byteLength(serializeScriptJson(compiled));
-    if (nodeBytes > DEVELOPER_GUIDE_NODE_BYTES) diagnostics.push(guideDiagnostic('node-budget', `Developer guide for component ${component.id} is ${nodeBytes} bytes; the limit is ${DEVELOPER_GUIDE_NODE_BYTES}.`, component, `${componentPath}/developer_guide`, { bytes: nodeBytes, limit: DEVELOPER_GUIDE_NODE_BYTES }, ['remove lower-value guide text or items until the safe serialized guide fits']));
+    if (nodeBytes > INTERNAL_STRUCTURE_NODE_BYTES) diagnostics.push(structureDiagnostic('node-budget', `Internal structure for component ${component.id} is ${nodeBytes} bytes; the limit is ${INTERNAL_STRUCTURE_NODE_BYTES}.`, component, basePath, { bytes: nodeBytes, limit: INTERNAL_STRUCTURE_NODE_BYTES }, ['remove lower-value structure items or evidence until the safe serialized structure fits']));
     nodes[component.id] = compiled;
   }
 
   const data = { schemaVersion: 1, nodes };
   const encoded = serializeChunkedScriptJson(data);
   const bytes = Buffer.byteLength(encoded);
-  if (bytes > DEVELOPER_GUIDE_MEMBER_BYTES) {
-    const contributor = findDeveloperGuideBudgetContributor(components, nodes, {
-      limit: DEVELOPER_GUIDE_MEMBER_BYTES,
-    });
-    const component = contributor?.component || withGuide.at(-1);
+  if (bytes > INTERNAL_STRUCTURE_MEMBER_BYTES) {
+    const contributor = findInternalStructureBudgetContributor(components, nodes, { limit: INTERNAL_STRUCTURE_MEMBER_BYTES });
+    const component = contributor?.component || withStructure.at(-1);
     const componentIndex = contributor?.componentIndex ?? components.indexOf(component);
-    diagnostics.push(guideDiagnostic('member-budget', `Architecture developer guide payload is ${bytes} bytes; the limit is ${DEVELOPER_GUIDE_MEMBER_BYTES}.`, component, `/components/${componentIndex}/developer_guide`, { bytes, limit: DEVELOPER_GUIDE_MEMBER_BYTES }, ['reduce the member developer guides until the emitted payload fits']));
+    diagnostics.push(structureDiagnostic('member-budget', `Architecture internal structure payload is ${bytes} bytes; the limit is ${INTERNAL_STRUCTURE_MEMBER_BYTES}.`, component, `/components/${componentIndex}/internal_structure`, { bytes, limit: INTERNAL_STRUCTURE_MEMBER_BYTES }, ['reduce internal structure content until the emitted payload fits']));
   }
-  if (diagnostics.length) throwDiagnosticError(`Developer guide validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
+  if (diagnostics.length) throwDiagnosticError(`Internal structure validation failed:\n${diagnostics.map((item) => `- ${item.message}`).join('\n')}`, diagnostics);
   return {
     data,
     encoded,
     receipt: {
       schemaVersion: 1,
-      nodeCount: withGuide.length,
+      nodeCount: withStructure.length,
       itemCount,
+      relationCount,
+      sourceCount,
       bytes,
       sha256: createHash('sha256').update(encoded).digest('hex'),
     },
@@ -208,7 +238,7 @@ export function loadDiagram({ rendererDir, diagramType, defaultExample, argv = p
   validateGuidedViews(diagramType, diagram);
   validateRelationshipIds(diagramType, diagram);
   validateEngineeringProfile(diagramType, diagram);
-  const developerGuide = compileDeveloperGuides(diagramType, diagram);
+  const internalStructure = compileInternalStructures(diagramType, diagram);
   const sourceEvidence = verifyRepositoryEvidence(diagramType, diagram, process.env.ARCHIFY_REPO_ROOT);
   const template = fs.readFileSync(path.join(skillRoot, 'assets/template.html'), 'utf8');
   const outputRequest = {
@@ -220,7 +250,7 @@ export function loadDiagram({ rendererDir, diagramType, defaultExample, argv = p
   };
   const { outputPath: outPath } = resolveOutputPath(outputRequest);
   outputPathGuards.set(outPath, outputRequest);
-  return { diagram, template, outPath, sourceEvidence, developerGuide };
+  return { diagram, template, outPath, sourceEvidence, internalStructure };
 }
 
 // Brand URL capture is the only asynchronous authoring step. Typed renderers
@@ -235,7 +265,7 @@ export async function loadDiagramWithBrandMarks(options) {
 const START_TYPES = new Set(['architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle']);
 
 // Common CLI tail: fill the template and write the standalone HTML file.
-export function writeDiagram({ outPath, template, diagramType, meta, svg, cards, sourceEvidence = null, developerGuide = null }) {
+export function writeDiagram({ outPath, template, diagramType, meta, svg, cards, sourceEvidence = null, internalStructure = null }) {
   if (!START_TYPES.has(diagramType)) throw new Error(`writeDiagram: unknown diagram type ${JSON.stringify(diagramType)}`);
   const outputGuard = outputPathGuards.get(outPath);
   if (outputGuard) resolveOutputPath(outputGuard);
@@ -249,7 +279,7 @@ export function writeDiagram({ outPath, template, diagramType, meta, svg, cards,
     visualPreset: meta.visual_preset || 'classic',
     guidedViews: meta.views || [],
     sourceEvidence,
-    developerGuide,
+    internalStructure,
   }));
   outputPathGuards.delete(outPath);
   console.log(outPath);

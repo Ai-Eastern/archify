@@ -79,7 +79,7 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
   const preferenceKeys = ['theme', 'preset', 'present', 'embed'];
   const uid = () => `${Date.now().toString(36)}-${++sequence}-${Math.random().toString(36).slice(2)}`;
   const diagramAt = href => new URLSearchParams(new URL(href).hash.slice(1)).get('diagram') ?? bundle.entry;
-  const isGuide = href => new URLSearchParams(new URL(href).hash.slice(1)).get('inspect') === 'guide';
+  const isStructure = href => new URLSearchParams(new URL(href).hash.slice(1)).get('inspect') === 'structure';
   const isCurrent = state => Boolean(state && state === active && !state.revoked && state.phase === 'ready' &&
     history.state?.entryId === state.entryId && diagramAt(location.href) === state.diagram);
   const workbench = installWorkbench({ bundle, navigate, back, onLayoutChange: invalidateLayout });
@@ -101,6 +101,19 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
       if (value == null || value === false) url.searchParams.delete(key);
       else url.searchParams.set(key, value === true ? '1' : value);
     }
+    return url;
+  }
+  function canonicalStructureUrl(href) {
+    const url = new URL(href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    if (params.get('inspect') !== 'structure') return url;
+    const diagram = params.get('diagram') ?? bundle.entry;
+    const focus = params.get('focus');
+    const reference = bundle.references.find(item => item.occurrence.diagram === diagram && item.occurrence.node === focus);
+    if (!reference) return url;
+    params.set('diagram', reference.target.diagram);
+    params.set('focus', reference.target.node);
+    url.hash = params.toString();
     return url;
   }
   function updatePreferences(values, confirm = true) {
@@ -172,11 +185,12 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     const member = Object.hasOwn(bundle.members, diagram) ? bundle.members[diagram] : null;
     if (!member) return zh ? '未知架构图' : 'Unknown diagram';
     const params = new URLSearchParams(new URL(href).hash.slice(1));
-    if ((params.has('inspect') && params.get('inspect') !== 'guide') ||
-        (params.get('inspect') === 'guide' && !params.get('focus')) ||
-        (params.has('section') && (params.get('inspect') !== 'guide' ||
-          !['flow', 'interfaces', 'state', 'constraints', 'change_points'].includes(params.get('section'))))) {
-      return zh ? '无效的开发指南地址' : 'Invalid developer guide address';
+    if ((params.has('inspect') && params.get('inspect') !== 'structure') ||
+        (params.get('inspect') === 'structure' && !params.get('focus')) ||
+        (params.has('section') && (params.get('inspect') !== 'structure' ||
+          !['code', 'state'].includes(params.get('section')))) ||
+        (params.has('item') && (!params.has('section') || params.get('inspect') !== 'structure'))) {
+      return zh ? '无效的内部结构地址' : 'Invalid internal structure address';
     }
     if ((params.has('route') && params.get('route').split('~').length !== 2) ||
         (params.has('focus') && !params.get('focus')) ||
@@ -190,15 +204,16 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     }
     if (params.has('relation') && !member.relations.includes(params.get('relation'))) return zh ? '未知关系' : 'Unknown relationship';
     if (params.has('view') && !member.views.includes(params.get('view'))) return zh ? '未知章节' : 'Unknown chapter';
-    const sections = member.guideNodes?.[params.get('focus')];
-    if (params.has('section') && Array.isArray(sections) && !sections.includes(params.get('section'))) return zh ? '未知开发指南章节' : 'Unknown developer guide section';
+    const structure = member.structureNodes?.[params.get('focus')];
+    if (params.get('inspect') === 'structure' && !structure) return zh ? '该节点没有内部结构' : 'This node has no internal structure';
+    if (params.has('section') && (!structure || !Array.isArray(structure[params.get('section')]))) return zh ? '未知内部结构分区' : 'Unknown internal structure section';
+    if (params.has('item') && !structure?.[params.get('section')]?.includes(params.get('item'))) return zh ? '未知内部结构条目' : 'Unknown internal structure item';
     return null;
   }
   function failure(state, message) {
     if (state && pending !== state) return;
     const retry = state ? { href: state.href, mode: state.mode, entry: state.entry, snapshot: state.snapshot } : null;
     cancelPending();
-    requestedGraphInformation = null;
     if (!isCurrent(active)) {
       dispose(active); active = null;
       workbench.commit(null); toolbar.commit(null);
@@ -215,10 +230,12 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     if (history.state?.hasPrevious) { captureVisit(); history.back(); }
   }
   function returnGraph(information) {
-    if (!isCurrent(active) || !isGuide(active.href)) return;
-    requestedGraphInformation = ['relationships', 'sources'].includes(information) ? information : null;
+    if (!isCurrent(active) || !isStructure(active.href)) return;
+    requestedGraphInformation = ['relationships', 'sources'].includes(information)
+      ? { kind: information, entryId: history.state?.structureSourceEntryId || active.entryId }
+      : null;
     cancelPending();
-    if (history.state?.guideSourceEntryId && history.state.hasPrevious) { back(); return; }
+    if (history.state?.structureSourceEntryId && history.state.hasPrevious) { back(); return; }
     const params = new URLSearchParams(new URL(active.frame.contentWindow.ArchifyAddress.location.href).hash.slice(1));
     navigate({ diagram: active.diagram, focus: params.get('focus') || undefined });
   }
@@ -227,29 +244,27 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     diagram = target.diagram ?? active?.diagram ?? diagramAt(location.href);
     focus = target.focus;
     relation = target.relation;
-    const url = preferred(location.href);
+    let url = preferred(location.href);
     const params = new URLSearchParams({ diagram, ...(focus ? { focus } : {}), ...(relation ? { relation } : {}),
-      ...(target.inspect !== undefined ? { inspect: target.inspect } : {}), ...(target.section !== undefined ? { section: target.section } : {}) });
+      ...(target.inspect !== undefined ? { inspect: target.inspect } : {}), ...(target.section !== undefined ? { section: target.section } : {}),
+      ...(target.item !== undefined ? { item: target.item } : {}) });
     url.hash = params.toString();
-    let error = validationError(url.href);
+    // A reference keeps its local graph identity; only its structure opens the
+    // canonical definition. No structure body is copied into the occurrence.
+    url = canonicalStructureUrl(url.href);
+    diagram = diagramAt(url.href);
+    focus = new URLSearchParams(url.hash.slice(1)).get('focus') || undefined;
+    const error = validationError(url.href);
     if (error) { setStatus(`${diagram}: ${error}`); return; }
-    // A reference keeps its local graph identity; only its guide opens the
-    // canonical definition. No guide body is copied into the occurrence.
-    if (target.inspect === 'guide') {
-      const reference = bundle.references.find(item => item.occurrence.diagram === diagram && item.occurrence.node === focus);
-      if (reference) {
-        diagram = reference.target.diagram; focus = reference.target.node;
-        params.set('diagram', diagram); params.set('focus', focus); url.hash = params.toString();
-        error = validationError(url.href);
-        if (error) { setStatus(`${diagram}: ${error}`); return; }
-      }
-    }
     if (isCurrent(active) && active.diagram === diagram) {
       const current = new URLSearchParams(new URL(active.frame.contentWindow.ArchifyAddress.location.href).hash.slice(1));
-      const sameSurface = (current.get('inspect') === 'guide') === (target.inspect === 'guide');
-      if (sameSurface && (target.inspect !== 'guide' || current.get('focus') === focus)) {
+      const sameSurface = (current.get('inspect') === 'structure') === (target.inspect === 'structure');
+      if (sameSurface && (target.inspect !== 'structure' || current.get('focus') === focus)) {
         cancelPending(); errorView.hidden = true;
-        if (target.inspect === 'guide' ? target.section !== undefined && target.section !== current.get('section') : focus || relation) {
+        if (target.inspect === 'structure'
+          ? (target.section !== undefined && target.section !== current.get('section')) ||
+            (target.item !== undefined && target.item !== current.get('item'))
+          : focus || relation) {
           active.frame.contentWindow.ArchifyAddress.navigate(url.href);
           captureVisit();
         }
@@ -259,11 +274,11 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     if (pending && pending.mode !== 'history' && preferred(pending.href).href === url.href) return;
     if (queued?.href === url.href) return;
     cancelPending();
-    const replace = isCurrent(active) && active.diagram === diagram && isGuide(active.href) && target.inspect !== 'guide';
+    const replace = isCurrent(active) && active.diagram === diagram && isStructure(active.href) && target.inspect !== 'structure';
     const entry = replace
       ? { atlas: 1, entryId: active.entryId, hasPrevious: Boolean(history.state?.hasPrevious) }
       : { atlas: 1, entryId: uid(), hasPrevious: true,
-          ...(target.inspect === 'guide' && isCurrent(active) && !isGuide(active.href) ? { guideSourceEntryId: active.entryId } : {}) };
+          ...(target.inspect === 'structure' && isCurrent(active) && !isStructure(active.href) ? { structureSourceEntryId: active.entryId } : {}) };
     const intent = { href: url.href, mode: replace ? 'replace' : 'explicit', entry,
       fromMember: Boolean(active && document.activeElement === active.frame) };
     if (isCurrent(active) && active.frame.contentDocument.documentElement.hasAttribute('data-atlas-export-busy')) {
@@ -276,10 +291,13 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
   }
   function start(intent) {
     cancelPending();
+    if (requestedGraphInformation && intent.entry.entryId !== requestedGraphInformation.entryId) {
+      requestedGraphInformation = null;
+    }
     // With no retained graph, the error is the visible recovery surface. Keep
     // it until a ready replacement commits, rather than expose an empty stage.
     if (active) errorView.hidden = true;
-    const href = preferred(intent.href).href;
+    const href = canonicalStructureUrl(preferred(intent.href).href).href;
     const diagram = diagramAt(href);
     const frame = document.createElement('iframe');
     const state = { ...intent, href, frame, diagram, entryId: intent.entry.entryId,
@@ -362,21 +380,22 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     state.frame.dataset.atlasState = 'active'; state.frame.inert = false;
     state.frame.removeAttribute('aria-hidden'); state.frame.removeAttribute('tabindex');
     state.navigation.restore(state.snapshot?.navigation, { focus: false });
-    if (!isGuide(href) && requestedGraphInformation) {
-      state.navigation.showInformation?.(requestedGraphInformation, { focus: true });
-      requestedGraphInformation = null;
-    }
     workbench.commit(state); toolbar.commit(state);
     document.title = `${bundle.members[state.diagram].title} · ${bundle.meta.title}`;
     errorView.hidden = true; setStatus(); setPreparing(false);
     sharedMotion = state.frame.contentWindow.Archify?.motionGovernor?.readerMode() || sharedMotion;
     dispose(previous);
     if (restoreFocus) {
-      const guide = state.frame.contentWindow.Archify?.developerGuide;
-      if (isGuide(state.href) && state.snapshot?.guide?.focus && typeof guide?.focus === 'function') {
-        guide.focus(state.snapshot.guide.focus);
+      const structure = state.frame.contentWindow.Archify?.internalStructure;
+      if (isStructure(state.href) && state.snapshot?.structure?.focus && typeof structure?.focus === 'function') {
+        structure.focus(state.snapshot.structure.focus);
       } else if (state.snapshot?.navigation?.focus) state.navigation.restoreFocus?.(state.snapshot.navigation.focus);
       else state.navigation.focus?.();
+    }
+    if (!isStructure(href) && requestedGraphInformation?.entryId === state.entryId) {
+      workbench.openDirectory(false);
+      state.navigation.showInformation?.(requestedGraphInformation.kind, { focus: true });
+      requestedGraphInformation = null;
     }
     captureVisit(state);
   }
@@ -420,7 +439,7 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     if (state === pending) {
       if (message.type === 'error') failure(state, message.message);
       else if (message.type === 'ready' && state.phase === 'initializing') {
-        if (message.surface !== undefined && message.surface !== (isGuide(state.href) ? 'guide' : 'graph')) {
+        if (message.surface !== undefined && message.surface !== (isStructure(state.href) ? 'structure' : 'graph')) {
           failure(state, zh ? '阅读内容尚未就绪，请重试' : 'The requested reading surface is not ready. Please retry.');
           return;
         }
@@ -431,10 +450,10 @@ function atlasRuntime(installNavigation, installWorkbench, installToolbar, readB
     if (!isCurrent(state)) return;
     if (message.type === 'navigate') {
       navigate({ diagram: message.diagram ?? state.diagram, focus: message.focus, relation: message.relation,
-        inspect: message.inspect, section: message.section });
+        inspect: message.inspect, section: message.section, item: message.item });
       return;
     }
-    if (message.type === 'guide-return') { returnGraph(message.information); return; }
+    if (message.type === 'structure-return') { returnGraph(message.information); return; }
     if (message.type === 'appearance' && ['live', 'still'].includes(message.motion)) {
       if (sharedMotion !== message.motion) {
         sharedMotion = message.motion; invalidateLayout();

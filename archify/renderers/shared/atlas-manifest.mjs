@@ -125,13 +125,13 @@ export function validateAtlasRelations(manifest, members) {
     const occurrence = endpoint(reference.occurrence, `${location}/occurrence`);
     const target = endpoint(reference.target, `${location}/target`);
     const occurrenceKey = key(reference.occurrence);
-    if (occurrence.developer_guide) {
+    if (occurrence.internal_structure) {
       const componentIndex = members.get(reference.occurrence.diagram).diagram.components.indexOf(occurrence);
-      const guidePath = `/components/${componentIndex}/developer_guide`;
-      reject('reference-guide', 'A reference occurrence cannot author a developer guide; the canonical definition owns it.', {
-        ...reference.occurrence, path: guidePath,
+      const structurePath = `/components/${componentIndex}/internal_structure`;
+      reject('reference-structure', 'A reference occurrence cannot author internal structure; the canonical definition owns it.', {
+        ...reference.occurrence, path: structurePath,
       }, { occurrence: reference.occurrence, target: reference.target }, [
-        `remove ${guidePath} from ${occurrenceKey} and author the guide only on canonical node ${key(reference.target)}`,
+        `remove ${structurePath} from ${occurrenceKey} and author the structure only on canonical node ${key(reference.target)}`,
       ]);
     }
     if (occurrenceKey === key(reference.target)) reject('self-reference', 'A reference cannot target itself.', { path: location }, { occurrence: reference.occurrence, target: reference.target }, [`remove ${location} or set its target to a different canonical definition of type ${occurrence.type}`]);

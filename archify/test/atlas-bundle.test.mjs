@@ -65,10 +65,10 @@ test('v1 remains readable and malformed v2 structure is rejected before member s
   assert.throws(() => readAtlasBundle(packed).memberHtml('missing'));
 });
 
-test('guide data stays once in each owner document while executable resources remain shared', () => {
-  const marker = 'guide-body-unique-to-node';
-  const data = serializeChunkedScriptJson({ schemaVersion: 1, nodes: { node: { summary: marker } } });
-  const body = `<style>.guide{color:red}</style><script>guideRuntime()</script><script id="archify-developer-guide-data" type="application/json">${data}</script>`;
+test('internal structure data stays once in each owner document while executable resources remain shared', () => {
+  const marker = 'structure-body-unique-to-node';
+  const data = serializeChunkedScriptJson({ schemaVersion: 1, nodes: { node: { sources: [{ id: 'source' }], items: [{ id: 'root', domain: 'code', kind: 'directory', summary: marker }], relations: [] } } });
+  const body = `<style>.structure{color:red}</style><script>structureRuntime()</script><script id="archify-internal-structure-data" type="application/json">${data}</script>`;
   const original = fixture(2, body);
   const { encoded, reader } = roundtrip(original);
   const packed = JSON.parse(encoded);
@@ -77,52 +77,55 @@ test('guide data stays once in each owner document while executable resources re
   assert.ok(!packed.metadata.join('').includes(marker));
   for (const id of original.diagramIds) {
     assert.equal(reader.memberHtml(id), original.members[id].html);
-    assert.equal((reader.memberHtml(id).match(/id="archify-developer-guide-data"/g) || []).length, 1);
+    assert.equal((reader.memberHtml(id).match(/id="archify-internal-structure-data"/g) || []).length, 1);
   }
 });
 
-test('reader rejects invalid guide inventories, receipts, duplicated body metadata and Atlas totals before startup', () => {
+test('reader rejects invalid structure inventories, receipts, duplicated body metadata and Atlas totals before startup', () => {
   const original = fixture(3);
   for (const member of Object.values(original.members)) {
     member.nodes = ['node'];
-    member.guideNodes = { node: ['interfaces'] };
-    member.receipts = { developerGuide: { schemaVersion: 1, nodeCount: 1, itemCount: 1, bytes: 400, sha256: 'a'.repeat(64) } };
+    member.structureNodes = { node: { code: ['root'] } };
+    member.receipts = { internalStructure: { schemaVersion: 1, nodeCount: 1, itemCount: 1, relationCount: 0, sourceCount: 1, bytes: 400, sha256: 'a'.repeat(64) } };
   }
-  assert.equal(readAtlasBundle(packAtlasBundle(original)).bundle.members.diagram0.guideNodes.node[0], 'interfaces');
+  assert.equal(readAtlasBundle(packAtlasBundle(original)).bundle.members.diagram0.structureNodes.node.code[0], 'root');
   for (const mutate of [
-    b => { b.members.diagram0.guideNodes = []; },
-    b => { b.members.diagram0.guideNodes = { missing: ['interfaces'] }; },
-    b => { b.members.diagram0.guideNodes.node = ['arbitrary']; },
-    b => { b.members.diagram0.guideNodes.node = ['interfaces', 'interfaces']; },
-    b => { b.members.diagram0.guideNodes.node = []; },
-    b => { delete b.members.diagram0.receipts.developerGuide; },
-    b => { b.members.diagram0.receipts.developerGuide.nodeCount = 2; },
-    b => { b.members.diagram0.receipts.developerGuide.itemCount = 0; },
-    b => { b.members.diagram0.receipts.developerGuide.bytes = -1; },
-    b => { b.members.diagram0.receipts.developerGuide.bytes = 64 * 1024 + 1; },
-    b => { b.members.diagram0.receipts.developerGuide.sha256 = 'invalid'; },
-    b => { b.members.diagram0.receipts.developerGuide.summary = 'duplicated-body'; },
-    b => { b.members.diagram0.evidence = { guideBody: { summary: 'duplicated-body' } }; },
-    b => { b.members.diagram0.receipts.guideCopy = { summary: 'duplicated-body' }; },
-    b => { b.members.diagram0.receipts.extension = { snapshot: { schemaVersion: 1, nodes: { node: { summary: { text: 'duplicated-body' }, sections: [] } } } }; },
-    b => { b.members.diagram0.developerGuide = { nodes: { node: 'duplicated-body' } }; },
-    b => { b.developerGuides = { diagram0: 'duplicated-body' }; },
-    b => { for (const member of Object.values(b.members)) member.receipts.developerGuide.bytes = 50000; },
+    b => { b.members.diagram0.structureNodes = []; },
+    b => { b.members.diagram0.structureNodes = { missing: { code: ['root'] } }; },
+    b => { b.members.diagram0.structureNodes.node = { arbitrary: ['root'] }; },
+    b => { b.members.diagram0.structureNodes.node.code = ['root', 'root']; },
+    b => { b.members.diagram0.structureNodes.node.code = []; },
+    b => { delete b.members.diagram0.receipts.internalStructure; },
+    b => { b.members.diagram0.receipts.internalStructure.nodeCount = 2; },
+    b => { b.members.diagram0.receipts.internalStructure.itemCount = 0; },
+    b => { b.members.diagram0.receipts.internalStructure.relationCount = -1; },
+    b => { b.members.diagram0.receipts.internalStructure.sourceCount = 0; },
+    b => { b.members.diagram0.receipts.internalStructure.bytes = -1; },
+    b => { b.members.diagram0.receipts.internalStructure.bytes = 256 * 1024 + 1; },
+    b => { b.members.diagram0.receipts.internalStructure.sha256 = 'invalid'; },
+    b => { b.members.diagram0.receipts.internalStructure.summary = 'duplicated-body'; },
+    b => { b.members.diagram0.evidence = { structureBody: { summary: 'duplicated-body' } }; },
+    b => { b.members.diagram0.receipts.structureCopy = { summary: 'duplicated-body' }; },
+    b => { b.members.diagram0.receipts.extension = { structurePayload: { schemaVersion: 1, nodes: { node: { sources: [], items: [], relations: [] } } } }; },
+    b => { b.members.diagram0.receipts.internal_structure = { sources: [], items: [], relations: [] }; },
+    b => { b.members.diagram0.internalStructure = { nodes: { node: 'duplicated-body' } }; },
+    b => { b.internalStructures = { diagram0: 'duplicated-body' }; },
+    b => { for (const member of Object.values(b.members)) member.receipts.internalStructure.bytes = 200000; },
   ]) {
     const changed = structuredClone(original); mutate(changed);
-    assert.throws(() => readAtlasBundle(packAtlasBundle(changed)), /guide|metadata/i);
+    assert.throws(() => readAtlasBundle(packAtlasBundle(changed)), /structure|metadata/i);
   }
   const legacy = fixture(1);
   assert.equal(readAtlasBundle(legacy).memberHtml('diagram0'), legacy.members.diagram0.html);
-  legacy.members.diagram0.guideNodes = {};
+  legacy.members.diagram0.structureNodes = {};
   assert.equal(readAtlasBundle(packAtlasBundle(legacy)).memberHtml('diagram0'), legacy.members.diagram0.html);
   const extended = structuredClone(original);
   extended.members.diagram0.receipts.generator = { schemaVersion: 2, status: 'pass' };
   assert.doesNotThrow(() => readAtlasBundle(packAtlasBundle(extended)));
   const boundary = structuredClone(original);
-  boundary.members.diagram0.receipts.developerGuide.bytes = 64 * 1024;
-  boundary.members.diagram1.receipts.developerGuide.bytes = 64 * 1024 - 400;
+  boundary.members.diagram0.receipts.internalStructure.bytes = 256 * 1024;
+  boundary.members.diagram1.receipts.internalStructure.bytes = 256 * 1024 - 400;
   assert.doesNotThrow(() => readAtlasBundle(packAtlasBundle(boundary)));
-  boundary.members.diagram2.receipts.developerGuide.bytes++;
-  assert.throws(() => readAtlasBundle(packAtlasBundle(boundary)), /131072/);
+  boundary.members.diagram2.receipts.internalStructure.bytes++;
+  assert.throws(() => readAtlasBundle(packAtlasBundle(boundary)), /524288/);
 });
