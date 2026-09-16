@@ -156,8 +156,9 @@ export function verifyRepositoryEvidence(diagramType, diagram, repoRootInput) {
       supportedFixes: ['pass one readable local repository directory'],
     });
   }
-  const gitRoot = gitValue(realRoot, ['rev-parse', '--show-toplevel'], `Evidence root "${realRoot}" is not a Git repository.`);
-  if (fs.realpathSync(gitRoot) !== realRoot) {
+  const gitPrefix = gitValue(realRoot, ['rev-parse', '--show-prefix'], `Evidence root "${realRoot}" is not a Git repository.`);
+  if (gitPrefix) {
+    const gitRoot = gitValue(realRoot, ['rev-parse', '--show-toplevel'], `Evidence root "${realRoot}" is not a Git repository.`);
     evidenceFailure('repository-evidence/root-not-top-level', `Evidence root must be the Git top-level directory: ${gitRoot}`, {
       subject: { repoRoot: realRoot },
       evidence: { gitTopLevel: gitRoot },

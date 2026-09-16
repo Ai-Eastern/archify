@@ -54,10 +54,11 @@ function workflowJob(workflow, name) {
 
 test('internal-structure browser acceptance fails closed for an explicit unusable Chrome', () => {
   const browserTest = path.join(repoRoot, 'archify', 'test', 'internal-structure-browser.test.mjs');
+  const browserArgs = ['--test', '--test-reporter=tap', browserTest];
   for (const value of ['', path.join(os.tmpdir(), 'archify-missing-chrome')]) {
     const explicitEnvironment = { ...process.env, ARCHIFY_CHROME: value };
     delete explicitEnvironment.NODE_TEST_CONTEXT;
-    const result = spawnSync(process.execPath, ['--test', browserTest], {
+    const result = spawnSync(process.execPath, browserArgs, {
       cwd: repoRoot,
       encoding: 'utf8',
       env: explicitEnvironment,
@@ -70,7 +71,7 @@ test('internal-structure browser acceptance fails closed for an explicit unusabl
   const localEnvironment = { ...process.env };
   delete localEnvironment.ARCHIFY_CHROME;
   delete localEnvironment.NODE_TEST_CONTEXT;
-  const local = spawnSync(process.execPath, ['--test', browserTest], {
+  const local = spawnSync(process.execPath, browserArgs, {
     cwd: repoRoot,
     encoding: 'utf8',
     env: localEnvironment,

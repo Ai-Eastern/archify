@@ -450,6 +450,21 @@ test('local-only preserves root, origin, commit, blob, path and line checks', ()
   assert.match(result.stdout, /must have an origin/);
 });
 
+test('repository root identity uses Git position and still rejects a real subdirectory', () => {
+  const data = fixture();
+  const output = path.join(data.root, 'root-boundary.html');
+  fs.writeFileSync(output, 'trusted previous artifact');
+
+  const result = run([
+    'deliver', 'architecture', data.input, output,
+    '--repo-root', path.join(data.root, 'src'), '--json',
+  ]);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.ok(JSON.parse(result.stdout).diagnostics.some(({ code }) =>
+    code === 'repository-evidence/root-not-top-level'), result.stdout);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
+});
+
 test('unsupported web providers and invalid authored addresses fail without exposing credentials', () => {
   const data = fixture();
   for (const repository of [
