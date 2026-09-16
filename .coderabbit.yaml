@@ -94,8 +94,8 @@ reviews:
           maintainer scope decision. Narrow fixes may use a concrete reproduction;
           small documentation or test corrections may use a rationale. Do not
           require a PR to close every item of a tracking issue. Accept
-          equivalent prose and explained Not applicable entries, not just exact
-          headings or checked boxes. Warn once with the specific missing facts;
+          equivalent prose and omission of inapplicable template sections, not just
+          exact headings or checked boxes. Warn once with the specific missing facts;
           read the latest description and maintainer decisions before repeating
           a warning. Do not classify missing evidence as a confirmed runtime defect.
       - name: Validation evidence
@@ -108,10 +108,11 @@ reviews:
           coverage, and generated-artifact freshness when their inputs changed.
           Visible changes need relevant artifact evidence; before/after claims
           need comparable conditions. Automated/browser and perceptual results
-          must be separate. Non-visual changes may explain Not applicable.
-          Repository-only prose/policy and focused test fixes may use justified
-          targeted checks under CONTRIBUTING.md; packaged Skill instructions and
-          shared test infrastructure are not a documentation/test-only shortcut.
+          must be separate. Non-visual changes may omit visual evidence; changes
+          without generated-output impact may omit that section. Choose coverage
+          by actual behavior and callers under CONTRIBUTING.md. Relevant CI can
+          supply coverage without duplicating runs locally. Packaged Skill
+          instructions and shared test infrastructure may affect runtime behavior.
           Reuse linked archive manifests, source comparisons, and freshness CI;
           an excluded binary diff alone is not evidence of unrelated changes.
           Distinguish author reports from observed final-head CI; skipped,
