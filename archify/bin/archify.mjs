@@ -814,23 +814,25 @@ function sourceEvidenceFromArtifact(artifact) {
   return evidence;
 }
 
-async function developerGuideReceiptFromArtifact(artifact) {
-  const { findHtmlScriptsById, parseDeveloperGuidePayload } = await import('../renderers/shared/utils.mjs');
+async function internalStructureReceiptFromArtifact(artifact) {
+  const { findHtmlScriptsById, parseInternalStructurePayload } = await import('../renderers/shared/utils.mjs');
   const html = artifact.toString('utf8');
-  const matches = findHtmlScriptsById(html, 'archify-developer-guide-data');
+  const matches = findHtmlScriptsById(html, 'archify-internal-structure-data');
   if (!matches.length) return null;
-  if (matches.length !== 1) throw new Error('Rendered developer guide payload must appear exactly once.');
+  if (matches.length !== 1) throw new Error('Rendered internal structure payload must appear exactly once.');
   const match = matches[0];
   if (String(match.attributes.type || '').trim().toLowerCase() !== 'application/json') {
-    throw new Error('Rendered developer guide payload script must use type="application/json".');
+    throw new Error('Rendered internal structure payload script must use type="application/json".');
   }
-  if (!match.closed) throw new Error('Rendered developer guide payload script is not closed.');
+  if (!match.closed) throw new Error('Rendered internal structure payload script is not closed.');
   const encoded = match.content;
-  const parsed = parseDeveloperGuidePayload(encoded);
+  const parsed = parseInternalStructurePayload(encoded);
   return {
     schemaVersion: 1,
     nodeCount: parsed.nodeCount,
     itemCount: parsed.itemCount,
+    relationCount: parsed.relationCount,
+    sourceCount: parsed.sourceCount,
     bytes: parsed.bytes,
     sha256: createHash('sha256').update(encoded).digest('hex'),
   };
@@ -1115,11 +1117,11 @@ async function commandDeliver(args) {
       });
       return;
     }
-    let developerGuide;
+    let internalStructure;
     try {
-      developerGuide = await developerGuideReceiptFromArtifact(artifact);
+      internalStructure = await internalStructureReceiptFromArtifact(artifact);
     } catch (error) {
-      const message = `Could not read the developer guide receipt: ${error.message}`;
+      const message = `Could not read the internal structure receipt: ${error.message}`;
       reportDeliveryFailure({
         json,
         stage: 'receipt',
@@ -1128,7 +1130,7 @@ async function commandDeliver(args) {
         output: outputPath,
         error: message,
         diagnostics: [diagnostic({
-          code: 'delivery/developer-guide-receipt-invalid',
+          code: 'delivery/internal-structure-receipt-invalid',
           message,
           subject: { output: outputPath },
           evidence: { reason: error.message },
@@ -1170,7 +1172,7 @@ async function commandDeliver(args) {
           ...(sourceEvidence.repository.linkMode ? { linkMode: sourceEvidence.repository.linkMode } : {}),
         },
       } : {}),
-      ...(developerGuide ? { developerGuide } : {}),
+      ...(internalStructure ? { internalStructure } : {}),
     };
 
     try {

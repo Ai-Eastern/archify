@@ -67,7 +67,7 @@ html:not([data-atlas-layout=rail]) .atlas-rail{display:none}
 .atlas-overview-heading{font:500 12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;color:var(--text-muted);margin:0 0 20px}
 .atlas-selection-hint{position:absolute;left:1.5rem;bottom:1rem;display:flex;align-items:center;height:2.4rem;margin:0;color:var(--text-muted);font:12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none}
 .atlas-selection-hint[data-selected=true]{visibility:hidden}
-.atlas-guide-inspection{margin:0;padding:0 1rem .75rem;color:var(--text-muted);font:13px/1.6 -apple-system,BlinkMacSystemFont,sans-serif}
+.atlas-structure-inspection{margin:0;padding:0 1rem .75rem;color:var(--text-muted);font:13px/1.6 -apple-system,BlinkMacSystemFont,sans-serif}
 html[data-embed=true] .atlas-selection-hint,html[data-present=true] .atlas-selection-hint{display:none}
 @media(max-width:720px){.atlas-selection-hint{position:static;height:auto;min-height:20px;margin-top:12px;transform:translateX(var(--archify-scroll-x,0px))}}
 .atlas-overview .cards{display:block;margin:0;padding:0}
@@ -85,9 +85,9 @@ html[data-embed=true] .atlas-selection-hint,html[data-present=true] .atlas-selec
 .atlas-inspector #btn-focus-clear,.atlas-inspector #btn-focus-copy,.atlas-return-to-graph{width:auto;height:auto;min-height:32px;padding:6px 0;border:0;border-radius:0;background:none;color:var(--text-muted);font:12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;text-align:left;cursor:pointer}
 .atlas-inspector #btn-focus-copy{color:var(--atlas-action)}
 .atlas-focus-navigation{margin:16px 0 12px}
-.atlas-focus-navigation button,.atlas-reference-guide{display:block;width:100%;min-height:36px;text-align:left;padding:9px 11px;border:0;border-radius:6px;background:color-mix(in srgb,var(--atlas-action) 9%,transparent);color:var(--atlas-action);font:500 14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;overflow-wrap:anywhere}
-.atlas-reference-guide{margin:0 0 16px}
-.atlas-focus-navigation button:hover,.atlas-reference-guide:hover{background:color-mix(in srgb,var(--atlas-action) 15%,transparent)}
+.atlas-focus-navigation button,.atlas-reference-structure{display:block;width:100%;min-height:36px;text-align:left;padding:9px 11px;border:0;border-radius:6px;background:color-mix(in srgb,var(--atlas-action) 9%,transparent);color:var(--atlas-action);font:500 14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;overflow-wrap:anywhere}
+.atlas-reference-structure{margin:0 0 16px}
+.atlas-focus-navigation button:hover,.atlas-reference-structure:hover{background:color-mix(in srgb,var(--atlas-action) 15%,transparent)}
 .atlas-focus-navigation button[data-atlas-reference]{background:none;padding-left:0;padding-right:0}
 html[data-atlas-member][data-theme=light] .atlas-focus-navigation button:not([data-atlas-reference]),html[data-atlas-member][data-theme=light] .atlas-directory-link:hover,html[data-atlas-member][data-theme=light] .atlas-directory-link[aria-current=page]{color:var(--text)}
 .atlas-inspector-tabs{display:flex;flex:none;gap:14px;margin:10px 0 0;border-bottom:1px solid var(--toolbar-border)}
@@ -154,7 +154,7 @@ html[data-atlas-member] svg[data-focus-active] [data-node-id]:not([data-focus-ma
 html[data-atlas-member] svg[data-focus-active] [data-focus-selected]{filter:none}
 html[data-preset=blueprint] .atlas-directory-link,html[data-preset=blueprint] .atlas-focus-navigation button{border-radius:2px}
 html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[data-embed=true] .atlas-breadcrumb,html[data-embed=true] .atlas-compact-navigation,html[data-embed=true] .atlas-inspection-slot{display:none}
-@media(max-width:720px){html[data-atlas-member] .header-row{flex-wrap:wrap}.atlas-navigation button,.atlas-directory-link,.atlas-directory-toggle,.atlas-focus-navigation button,.atlas-reference-guide,.atlas-inspector-tabs [role=tab],.atlas-inspection-jump,.atlas-inspector #btn-focus-clear,.atlas-inspector #btn-focus-copy,.atlas-return-to-graph{min-height:44px}.atlas-compact-navigation{display:block}}
+@media(max-width:720px){html[data-atlas-member] .header-row{flex-wrap:wrap}.atlas-navigation button,.atlas-directory-link,.atlas-directory-toggle,.atlas-focus-navigation button,.atlas-reference-structure,.atlas-inspector-tabs [role=tab],.atlas-inspection-jump,.atlas-inspector #btn-focus-clear,.atlas-inspector #btn-focus-copy,.atlas-return-to-graph{min-height:44px}.atlas-compact-navigation{display:block}}
 @media print{.atlas-rail,.atlas-navigation,.atlas-breadcrumb,.atlas-compact-navigation,.atlas-inspection-slot,.atlas-status{display:none!important}html[data-atlas-layout=rail] .container{margin:0 auto}}
 `;
   const container = doc.querySelector('.container');
@@ -247,7 +247,7 @@ html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[d
   overview.id = 'atlas-overview'; overview.setAttribute('aria-label', zh ? '本层概览' : 'Chapter overview');
   element('h2', 'atlas-overview-heading', overview, zh ? '本层概览' : 'Chapter overview');
   const selectionHint = element('p', 'atlas-selection-hint no-print', doc.querySelector('.diagram-container'), zh ? '选择节点，查看详情' : 'Select a node to view details');
-  const inspectionHelp = element('p', 'atlas-guide-inspection', null, zh ? '选择图中节点，在检查器中查看职责、关系和源码；使用“进入”或“查看定义”继续探索。' : 'Select a node to inspect its role, relationships, and sources. Use Open or View definition to explore further.');
+  const inspectionHelp = element('p', 'atlas-structure-inspection', null, zh ? '选择图中节点，在检查器中查看职责、关系和源码；使用“进入”或“查看定义”继续探索。' : 'Select a node to inspect its role, relationships, and sources. Use Open or View definition to explore further.');
   doc.querySelector('.diagram-guide-head').after(inspectionHelp);
   // readerLayout moves the original chapter cards here when the viewport has
   // enough unused width, and returns them to document flow otherwise.
@@ -260,7 +260,7 @@ html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[d
   clearButton.textContent = zh ? '← 本层概览' : '← Chapter overview';
   clearButton.setAttribute('aria-label', zh ? '清除节点选择并查看本层概览' : 'Clear the node selection and show the chapter overview');
   const returnToGraph = button(zh ? '返回图 ↑' : 'Back to diagram ↑', doc.querySelector('.relationship-lens-actions'), () => {
-    if (win.Archify.developerGuide?.surface() === 'guide') { win.Archify.developerGuide.close(); return; }
+    if (win.Archify.internalStructure?.surface() === 'structure') { win.Archify.internalStructure.close(); return; }
     const id = win.Archify.focus.active();
     const node = Array.from(doc.querySelectorAll('[data-node-id]')).find(item => item.getAttribute('data-node-id') === id);
     const target = node || doc.querySelector('.diagram-container');
@@ -287,17 +287,17 @@ html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[d
     panels[key] = panel;
   }
   const detail = doc.getElementById('focus-detail');
-  const quicklook = doc.getElementById('focus-developer-quicklook');
+  const quicklook = doc.getElementById('focus-internal-structure');
   const meta = doc.getElementById('focus-passport-meta');
   panels.details.append(detail, ...(quicklook ? [quicklook] : []), meta);
-  let guideTarget = null;
-  const hasReferenceGuide = bundle.references.some(ref => ref.occurrence.diagram === diagram && Array.isArray(bundle.members[ref.target.diagram]?.guideNodes?.[ref.target.node]));
-  const referenceGuide = hasReferenceGuide ? button(zh ? '打开开发指南 →' : 'Open developer guide →', null, () => {
-    if (guideTarget) navigate({ ...guideTarget, inspect: 'guide' });
-  }, 'atlas-reference-guide node-guide-open') : null;
-  if (referenceGuide) {
-    referenceGuide.id = 'atlas-open-developer-guide'; referenceGuide.hidden = true;
-    meta.before(referenceGuide);
+  let structureTarget = null;
+  const hasReferenceStructure = bundle.references.some(ref => ref.occurrence.diagram === diagram && Boolean(bundle.members[ref.target.diagram]?.structureNodes?.[ref.target.node]));
+  const referenceStructure = hasReferenceStructure ? button(zh ? '查看内部结构 →' : 'View internal structure →', null, () => {
+    if (structureTarget) navigate({ ...structureTarget, inspect: 'structure' });
+  }, 'atlas-reference-structure node-structure-open') : null;
+  if (referenceStructure) {
+    referenceStructure.id = 'atlas-open-internal-structure'; referenceStructure.hidden = true;
+    meta.before(referenceStructure);
   }
   const detailEmpty = element('p', 'atlas-detail-empty', panels.details, zh ? '此节点没有附加职责说明。' : 'No additional role description was provided for this node.');
   panels.relationships.append(doc.getElementById('focus-summary'), doc.getElementById('focus-reach'), doc.getElementById('relationship-lens-list'));
@@ -386,14 +386,18 @@ html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[d
     sourceScope.hidden = !sourceScope.textContent;
     renderTabs();
     if (next === shown) return;
+    if (next && directoryOpen && win.ArchifyAddress.active) {
+      selectTab('details', { notify: false });
+      showDirectory(false);
+    }
     shown = next; actions.replaceChildren(); actions.hidden = true;
     const detailLink = bundle.details.find(item => item.from.diagram === diagram && item.from.node === next);
     const ref = bundle.references.find(item => item.occurrence.diagram === diagram && item.occurrence.node === next);
-    guideTarget = ref && Array.isArray(bundle.members[ref.target.diagram]?.guideNodes?.[ref.target.node])
+    structureTarget = ref && bundle.members[ref.target.diagram]?.structureNodes?.[ref.target.node]
       ? { diagram: ref.target.diagram, focus: ref.target.node } : null;
-    if (referenceGuide) {
-      referenceGuide.hidden = !guideTarget;
-      if (guideTarget) referenceGuide.dataset.atlasGuide = next;
+    if (referenceStructure) {
+      referenceStructure.hidden = !structureTarget;
+      if (structureTarget) referenceStructure.dataset.atlasStructure = next;
     }
     if (detailLink || ref) {
       const destination = detailLink ? detailLink.to : ref.target.diagram;
@@ -516,7 +520,7 @@ html[data-embed=true] .atlas-rail,html[data-embed=true] .atlas-navigation,html[d
     },
     focus() {
       if (workbench && !workbench.canRestoreFocus(frame)) return;
-      if (win.Archify.developerGuide?.surface() === 'guide') win.Archify.developerGuide.focus();
+      if (win.Archify.internalStructure?.surface() === 'structure') win.Archify.internalStructure.focus();
       else title.focus({ preventScroll: true });
     },
     setDirectoryOpen(open) {

@@ -34,146 +34,121 @@ function checkDocument(name, html) {
   }
 }
 
-function guideDocument({ guideScripts, evidence = true, nodeIds = ['users'] }) {
+function structureDocument({ structureScripts, evidence = true, nodeIds = ['users'] }) {
   const sourceEvidence = {
     schemaVersion: 1,
     verified: true,
     repository: { url: 'https://github.com/example/repo', revision: 'a'.repeat(40) },
     referenceCount: nodeIds.length,
-    nodes: Object.fromEntries(nodeIds.map((nodeId) => [nodeId, [{ id: `entry-${nodeId}`, role: 'export', path: `src/${nodeId}.js`, line: 1 }]])),
+    nodes: Object.fromEntries(nodeIds.map((nodeId) => [nodeId, [{ id: `entry-${nodeId}`, role: 'definition', path: `src/${nodeId}.js`, line: 1 }]])),
   };
   return `<!doctype html><html><body>
     <svg viewBox="0 0 240 160" data-quality-profile="standard">${nodeIds.map((nodeId) => `<g data-node-id="${nodeId}"><rect x="20" y="20" width="100" height="50"/></g>`).join('')}</svg>
     ${evidence ? `<script id="archify-source-evidence-data" type="application/json">${JSON.stringify(sourceEvidence)}</script>` : ''}
-    ${guideScripts}
+    ${structureScripts}
   </body></html>`;
 }
 
-function encodedGuide(overrides = {}) {
-  const guide = {
-    implementationScope: 'repository',
-    summary: { text: 'Routes requests.', sourceRefs: ['entry-users'] },
-    sections: [{ kind: 'interfaces', items: [{ id: 'route', title: 'route', direction: 'provided', text: 'Routes one request.', sourceRefs: ['entry-users'] }] }],
+function structureNode(nodeId = 'users', overrides = {}) {
+  return {
+    sources: [{ id: `entry-${nodeId}`, role: 'definition', path: `src/${nodeId}.js`, line: 1 }],
+    items: [
+      { id: 'src', domain: 'code', kind: 'directory', label: 'src', summary: 'Sources.' },
+      { id: 'route', domain: 'code', kind: 'function', label: 'route', parent: 'src', summary: 'Routes requests.', sourceRefs: [`entry-${nodeId}`] },
+    ],
+    relations: [],
     ...overrides,
   };
-  return JSON.stringify([JSON.stringify({ schemaVersion: 1, nodes: { users: guide } })]);
 }
 
-test('render output check: accepts one source-linked developer guide payload outside the SVG', () => {
-  const encoded = encodedGuide();
-  const { code, result } = checkDocument('guide-valid', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${encoded}</script>`,
-  }));
+function encodedStructure(nodes = { users: structureNode() }) {
+  return serializeChunkedScriptJson({ schemaVersion: 1, nodes });
+}
+
+const structureScript = encoded => `<script id="archify-internal-structure-data" type="application/json">${encoded}</script>`;
+
+test('render output check: accepts one source-linked internal structure payload outside the SVG', () => {
+  const { code, result } = checkDocument('structure-valid', structureDocument({ structureScripts: structureScript(encodedStructure()) }));
   assert.equal(code, 0);
-  assert.equal(result.checks.find((item) => item.name === 'developer_guide_payload')?.ok, true);
-  assert.equal(result.checks.find((item) => item.name === 'developer_guide_line_budget')?.ok, true);
+  assert.equal(result.checks.find((item) => item.name === 'internal_structure_payload')?.ok, true);
+  assert.equal(result.checks.find((item) => item.name === 'internal_structure_line_budget')?.ok, true);
 });
 
-test('render output check: rejects duplicate, orphaned, and unlinked developer guide payloads', () => {
-  const encoded = encodedGuide();
-  const duplicate = checkDocument('guide-duplicate', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${encoded}</script><script id="archify-developer-guide-data" type="application/json">${encoded}</script>`,
-  }));
+test('render output check: rejects duplicate, orphaned, and unlinked internal structure payloads', () => {
+  const encoded = encodedStructure();
+  const duplicate = checkDocument('structure-duplicate', structureDocument({ structureScripts: structureScript(encoded) + structureScript(encoded) }));
   assert.notEqual(duplicate.code, 0);
-  assert.equal(duplicate.result.checks.find((item) => item.name === 'developer_guide_payload')?.ok, false);
+  assert.equal(duplicate.result.checks.find((item) => item.name === 'internal_structure_payload')?.ok, false);
 
-  const orphaned = JSON.stringify([JSON.stringify({ schemaVersion: 1, nodes: { missing: JSON.parse(JSON.stringify(JSON.parse(JSON.parse(encoded)[0]).nodes.users)) } })]);
-  const orphan = checkDocument('guide-orphan', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${orphaned}</script>`,
-  }));
-  assert.notEqual(orphan.code, 0);
-
-  const unlinked = checkDocument('guide-unlinked', guideDocument({
-    evidence: false,
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${encoded}</script>`,
-  }));
-  assert.notEqual(unlinked.code, 0);
+  const orphaned = encodedStructure({ missing: structureNode('missing') });
+  assert.notEqual(checkDocument('structure-orphan', structureDocument({ structureScripts: structureScript(orphaned) })).code, 0);
+  assert.notEqual(checkDocument('structure-unlinked', structureDocument({ evidence: false, structureScripts: structureScript(encoded) })).code, 0);
 });
 
-test('render output check: finds duplicate guide scripts with DOM-equivalent attribute syntax', () => {
-  const encoded = encodedGuide();
+test('render output check: rejects semantically corrupted internal structure bodies', () => {
+  const cases = [
+    node => { node.items.push({ ...node.items[1] }); },
+    node => { node.items[1].domain = 'state'; },
+    node => { node.items[1].parent = 'missing'; },
+    node => { node.relations.push({ id: 'dangling', from: 'route', to: 'missing', kind: 'calls', sourceRefs: ['entry-users'] }); },
+  ];
+  cases.forEach((mutate, index) => {
+    const node = structureNode();
+    mutate(node);
+    const checked = checkDocument(`structure-semantic-corruption-${index}`, structureDocument({
+      structureScripts: structureScript(encodedStructure({ users: node })),
+    }));
+    assert.notEqual(checked.code, 0, `corruption ${index} must fail closed`);
+    assert.equal(checked.result.checks.find((item) => item.name === 'internal_structure_payload')?.ok, false);
+  });
+});
+
+test('render output check: finds duplicate structure scripts with DOM-equivalent attribute syntax', () => {
+  const encoded = encodedStructure();
   for (const startTag of [
-    `<script data-probe='>' TYPE='application/json' ID='archify-developer-guide-data'>`,
-    '<script type=application/json id="archify-developer-guide-d&#97;ta">',
+    `<script data-probe='>' TYPE='application/json' ID='archify-internal-structure-data'>`,
+    '<script type=application/json id="archify-internal-structure-d&#97;ta">',
   ]) {
-    const duplicate = checkDocument('guide-duplicate-dom-syntax', guideDocument({
-      guideScripts: `${startTag}${encoded}</script><script id="archify-developer-guide-data" type="application/json">${encoded}</script>`,
+    const duplicate = checkDocument('structure-duplicate-dom-syntax', structureDocument({
+      structureScripts: `${startTag}${encoded}</script>${structureScript(encoded)}`,
     }));
     assert.notEqual(duplicate.code, 0, startTag);
-    assert.equal(duplicate.result.checks.find((item) => item.name === 'developer_guide_payload')?.ok, false);
   }
-
-  const canonical = `<script id="archify-developer-guide-data" type="application/json">${encoded}</script>`;
+  const canonical = structureScript(encoded);
   for (const prefix of ['< not-a-tag\n', '<x bogus=a=">']) {
-    const duplicate = checkDocument('guide-duplicate-after-malformed-text', guideDocument({
-      guideScripts: `${prefix}${canonical}${canonical}`,
-    }));
-    assert.notEqual(duplicate.code, 0, prefix);
+    assert.notEqual(checkDocument('structure-duplicate-after-malformed-text', structureDocument({ structureScripts: `${prefix}${canonical}${canonical}` })).code, 0);
   }
-
-  const commented = checkDocument('guide-commented-script', guideDocument({
-    guideScripts: `<!-- <script type="application/json" id="archify-developer-guide-data">ignored</script> --><script id="archify-developer-guide-data" type="application/json">${encoded}</script>`,
+  const commented = checkDocument('structure-commented-script', structureDocument({
+    structureScripts: `<!-- ${structureScript(encoded)} -->${structureScript(encoded)}`,
   }));
   assert.equal(commented.code, 0, JSON.stringify(commented.result));
 });
 
-test('render output check: rejects empty, per-node oversized, and member-oversized guide payloads', () => {
-  const unsafe = encodedGuide({ summary: { text: 'Routes A & B.', sourceRefs: ['entry-users'] } });
-  let checked = checkDocument('guide-unsafe-encoding', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${unsafe}</script>`,
+test('render output check: rejects unsafe, empty, per-node oversized, and member-oversized structure payloads', () => {
+  let checked = checkDocument('structure-unsafe-encoding', structureDocument({
+    structureScripts: structureScript(JSON.stringify([JSON.stringify({ schemaVersion: 1, nodes: { users: structureNode('users', { marker: 'A & B' }) } })])),
+  }));
+  assert.notEqual(checked.code, 0);
+  checked = checkDocument('structure-empty', structureDocument({ structureScripts: structureScript(encodedStructure({})) }));
+  assert.notEqual(checked.code, 0);
+  checked = checkDocument('structure-node-oversized', structureDocument({
+    structureScripts: structureScript(encodedStructure({ users: structureNode('users', { marker: 'x'.repeat(66 * 1024) }) })),
   }));
   assert.notEqual(checked.code, 0);
 
-  const empty = serializeChunkedScriptJson({ schemaVersion: 1, nodes: {} });
-  checked = checkDocument('guide-empty', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${empty}</script>`,
-  }));
-  assert.notEqual(checked.code, 0);
-
-  const oversizedNode = encodedGuide({ summary: { text: 'x'.repeat(5000), sourceRefs: ['entry-users'] } });
-  checked = checkDocument('guide-node-oversized', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${oversizedNode}</script>`,
-  }));
-  assert.notEqual(checked.code, 0);
-
-  const nodeIds = Array.from({ length: 24 }, (_, index) => `node-${index}`);
-  const nodes = Object.fromEntries(nodeIds.map((nodeId, index) => {
-    const sourceRef = `entry-${nodeId}`;
-    const item = (suffix, withInterface = false) => ({
-      id: `${suffix}-${index}`,
-      title: 'T'.repeat(80),
-      ...(withInterface ? { code: 'c'.repeat(200), direction: 'provided' } : {}),
-      text: 'x'.repeat(280),
-      sourceRefs: [sourceRef],
-    });
-    const guide = {
-      implementationScope: 'repository',
-      summary: { text: 's'.repeat(240), sourceRefs: [sourceRef] },
-      sections: [
-        { kind: 'flow', items: [item('flow-a'), item('flow-b'), item('flow-c')] },
-        { kind: 'interfaces', items: [item('interface-a', true), item('interface-b', true)] },
-      ],
-    };
-    assert.ok(Buffer.byteLength(serializeScriptJson(guide)) <= 4096);
-    return [nodeId, guide];
-  }));
-  const oversizedMember = serializeChunkedScriptJson({ schemaVersion: 1, nodes });
-  assert.ok(Buffer.byteLength(oversizedMember) > 64 * 1024);
-  assert.ok(oversizedMember.split('\n').every((line) => Buffer.byteLength(line) <= 8192));
-  checked = checkDocument('guide-member-oversized', guideDocument({
-    nodeIds,
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${oversizedMember}</script>`,
-  }));
+  const nodeIds = Array.from({ length: 5 }, (_, index) => `node-${index}`);
+  const nodes = Object.fromEntries(nodeIds.map(nodeId => [nodeId, structureNode(nodeId, { marker: 'x'.repeat(54 * 1024) })]));
+  const oversizedMember = encodedStructure(nodes);
+  assert.ok(Buffer.byteLength(oversizedMember) > 256 * 1024);
+  checked = checkDocument('structure-member-oversized', structureDocument({ nodeIds, structureScripts: structureScript(oversizedMember) }));
   assert.notEqual(checked.code, 0);
 });
 
-test('render output check: rejects developer guide script lines over 8192 UTF-8 bytes', () => {
+test('render output check: rejects internal structure script lines over 8192 UTF-8 bytes', () => {
   const oversized = JSON.stringify(['x'.repeat(8200)]);
-  const { code, result } = checkDocument('guide-long-line', guideDocument({
-    guideScripts: `<script id="archify-developer-guide-data" type="application/json">${oversized}</script>`,
-  }));
+  const { code, result } = checkDocument('structure-long-line', structureDocument({ structureScripts: structureScript(oversized) }));
   assert.notEqual(code, 0);
-  assert.equal(result.checks.find((item) => item.name === 'developer_guide_line_budget')?.ok, false);
+  assert.equal(result.checks.find((item) => item.name === 'internal_structure_line_budget')?.ok, false);
 });
 
 test('render output check: showcase rejects node copy that becomes illegible at 1440px', () => {

@@ -204,6 +204,23 @@ test('Atlas workbench preserves complete inspection and stable reading visits', 
     }
   });
 
+  await t.test('selecting a graph node replaces an open directory with its inspector', async () => {
+    await open();
+    await click('[data-node-id="redis"]');
+    await click(tab('sources'));
+    assert.equal(await selectedTab(), 'sources');
+    await click('#atlas-directory-toggle', true);
+    assert.equal(await runWorkbench(`document.getElementById('atlas-directory').hidden`), false);
+    await click('[data-node-id="controller"]');
+    assert.equal(await run('Archify.focus.active()'), 'controller');
+    assert.equal(await runWorkbench(`document.getElementById('atlas-directory').hidden`), true,
+      'Selecting a graph node must close the directory that occupies the shared rail');
+    assert.equal(await run(`document.querySelector('.atlas-inspector').hidden`), false,
+      'The selected node inspector replaces the directory immediately');
+    assert.equal(await selectedTab(), 'details',
+      'A fresh graph selection starts at node details instead of retaining the previous node tab');
+  });
+
   await t.test('complete local-only evidence, relationships, reach and original copy actions stay usable', async () => {
     await open();
     await click('[data-node-id="controller"]');

@@ -1076,7 +1076,7 @@ return layoutJsonMode ? buildLayoutReport() : renderSvg();
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
 const layoutJsonMode = process.argv.includes('--layout-json');
-const { diagram: arch, template, outPath, sourceEvidence, developerGuide } = await loadDiagramWithBrandMarks({
+const { diagram: arch, template, outPath, sourceEvidence, internalStructure } = await loadDiagramWithBrandMarks({
   rendererDir: path.dirname(fileURLToPath(import.meta.url)),
   diagramType: 'architecture',
   defaultExample: 'web-app.architecture.json',
@@ -1093,7 +1093,7 @@ writeDiagram({
   svg: rendered,
   cards: arch.cards,
   sourceEvidence,
-  developerGuide,
+  internalStructure,
 });
 }
 }

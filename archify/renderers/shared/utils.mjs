@@ -107,12 +107,12 @@ const CARDS_SLOT_RE = /    <!-- ARCHIFY:CARDS_SLOT_START -->[\s\S]*?    <!-- ARC
 const SUBTITLE_SLOT_RE = /^([ \t]*)<p class="subtitle">\[Subtitle description\]<\/p>[ \t]*(\r?\n)?/m;
 const GUIDED_VIEWS_PLACEHOLDER = '<!-- ARCHIFY:GUIDED_VIEWS_DATA -->';
 const SOURCE_EVIDENCE_PLACEHOLDER = '    <!-- ARCHIFY:SOURCE_EVIDENCE_DATA -->';
-const DEVELOPER_GUIDE_PLACEHOLDER = '    <!-- ARCHIFY:DEVELOPER_GUIDE_DATA -->';
+const INTERNAL_STRUCTURE_PLACEHOLDER = '    <!-- ARCHIFY:INTERNAL_STRUCTURE_DATA -->';
 const I18N_PLACEHOLDER = '    <!-- ARCHIFY:I18N_DATA -->';
 
-export const DEVELOPER_GUIDE_NODE_BYTES = 4 * 1024;
-export const DEVELOPER_GUIDE_MEMBER_BYTES = 64 * 1024;
-export const DEVELOPER_GUIDE_ATLAS_BYTES = 128 * 1024;
+export const INTERNAL_STRUCTURE_NODE_BYTES = 64 * 1024;
+export const INTERNAL_STRUCTURE_MEMBER_BYTES = 256 * 1024;
+export const INTERNAL_STRUCTURE_ATLAS_BYTES = 512 * 1024;
 
 const HTML_SPACE_RE = /[\t\n\f\r ]/;
 const HTML_RAW_TEXT_ELEMENTS = new Set([
@@ -289,49 +289,170 @@ export function findHtmlScriptsById(documentHtml, id) {
   return matches;
 }
 
-function guidePayloadObject(value, label) {
+function structurePayloadObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object.`);
   }
   return value;
 }
 
-export function parseDeveloperGuidePayload(encoded) {
+const INTERNAL_STRUCTURE_ID = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+const INTERNAL_STRUCTURE_SOURCE_ROLES = new Set(['definition', 'export', 'registration', 'callsite', 'guard', 'test', 'schema', 'documentation']);
+const INTERNAL_STRUCTURE_CODE_KINDS = new Set(['directory', 'file', 'class', 'interface', 'type', 'function', 'method']);
+const INTERNAL_STRUCTURE_RELATION_KINDS = new Set(['imports', 'calls', 'uses', 'creates', 'reads', 'writes']);
+const INTERNAL_STRUCTURE_RELATION_EVIDENCE_ROLES = new Set(['callsite', 'definition', 'guard', 'schema', 'test']);
+
+function structurePayloadAssert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function structurePayloadKeys(value, allowed, label) {
+  const extra = Object.keys(value).find((key) => !allowed.includes(key));
+  structurePayloadAssert(extra === undefined, `${label} contains unexpected property ${JSON.stringify(extra)}.`);
+}
+
+function structurePayloadText(value, limit, label) {
+  structurePayloadAssert(typeof value === 'string' && value.length > 0 && value.length <= limit,
+    `${label} must be a non-empty string no longer than ${limit} characters.`);
+}
+
+function validateRenderedStructure(nodeId, structure) {
+  const label = `Rendered internal structure node ${JSON.stringify(nodeId)}`;
+  structurePayloadKeys(structure, ['sources', 'items', 'relations'], label);
+  structurePayloadAssert(Array.isArray(structure.sources) && structure.sources.length > 0 && structure.sources.length <= 64,
+    `${label} must contain one to 64 sources.`);
+  structurePayloadAssert(Array.isArray(structure.items) && structure.items.length > 0 && structure.items.length <= 64,
+    `${label} must contain one to 64 items.`);
+  structurePayloadAssert(Array.isArray(structure.relations) && structure.relations.length <= 96,
+    `${label} must contain at most 96 relations.`);
+
+  const sources = new Map();
+  structure.sources.forEach((source, index) => {
+    const at = `${label} source ${index}`;
+    structurePayloadObject(source, at);
+    structurePayloadKeys(source, ['id', 'role', 'path', 'symbol', 'line', 'endLine', 'label'], at);
+    structurePayloadAssert(INTERNAL_STRUCTURE_ID.test(source.id || '') && !sources.has(source.id), `${at} has an invalid or duplicate id.`);
+    structurePayloadAssert(INTERNAL_STRUCTURE_SOURCE_ROLES.has(source.role), `${at} has an invalid role.`);
+    structurePayloadText(source.path, 240, `${at} path`);
+    if (source.symbol !== undefined) structurePayloadText(source.symbol, 200, `${at} symbol`);
+    if (source.label !== undefined) structurePayloadText(source.label, 48, `${at} label`);
+    if (source.line !== undefined) structurePayloadAssert(Number.isSafeInteger(source.line) && source.line > 0, `${at} line must be a positive integer.`);
+    if (source.endLine !== undefined) structurePayloadAssert(Number.isSafeInteger(source.endLine) && source.endLine > 0 && (source.line === undefined || source.endLine >= source.line), `${at} endLine must be at or after line.`);
+    sources.set(source.id, source);
+  });
+
+  const items = new Map();
+  structure.items.forEach((item, index) => {
+    const at = `${label} item ${index}`;
+    structurePayloadObject(item, at);
+    structurePayloadKeys(item, ['id', 'domain', 'kind', 'label', 'summary', 'parent', 'signature', 'valueType', 'sourceRefs'], at);
+    structurePayloadAssert(INTERNAL_STRUCTURE_ID.test(item.id || '') && !items.has(item.id), `${at} has an invalid or duplicate id.`);
+    const code = item.domain === 'code' && INTERNAL_STRUCTURE_CODE_KINDS.has(item.kind);
+    const state = item.domain === 'state' && ['group', 'field'].includes(item.kind);
+    structurePayloadAssert(code || state, `${at} has an invalid domain/kind pair.`);
+    structurePayloadText(item.label, 80, `${at} label`);
+    structurePayloadText(item.summary, 240, `${at} summary`);
+    if (item.parent !== undefined) structurePayloadAssert(INTERNAL_STRUCTURE_ID.test(item.parent), `${at} parent is invalid.`);
+    if (item.signature !== undefined) {
+      structurePayloadAssert(item.domain === 'code', `${at} signature is only valid for code items.`);
+      structurePayloadText(item.signature, 200, `${at} signature`);
+    }
+    if (item.kind === 'field') structurePayloadText(item.valueType, 200, `${at} valueType`);
+    else structurePayloadAssert(item.valueType === undefined, `${at} valueType is only valid for fields.`);
+    const container = item.kind === 'directory' || item.kind === 'group';
+    if (item.sourceRefs !== undefined) {
+      structurePayloadAssert(Array.isArray(item.sourceRefs) && item.sourceRefs.length > 0 && item.sourceRefs.length <= 3 && new Set(item.sourceRefs).size === item.sourceRefs.length,
+        `${at} sourceRefs must contain one to three unique source ids.`);
+      for (const sourceId of item.sourceRefs) structurePayloadAssert(sources.has(sourceId), `${at} references missing source ${JSON.stringify(sourceId)}.`);
+    } else structurePayloadAssert(container, `${at} requires sourceRefs.`);
+    items.set(item.id, item);
+  });
+
+  for (const [itemId, item] of items) {
+    if (item.parent !== undefined) {
+      const parent = items.get(item.parent);
+      structurePayloadAssert(parent && parent.domain === item.domain, `${label} item ${JSON.stringify(itemId)} has a missing or cross-domain parent.`);
+    }
+    const seen = new Set([itemId]);
+    let cursor = item;
+    let depth = 0;
+    while (cursor.parent !== undefined) {
+      structurePayloadAssert(!seen.has(cursor.parent), `${label} item ${JSON.stringify(itemId)} participates in a parent cycle.`);
+      seen.add(cursor.parent);
+      cursor = items.get(cursor.parent);
+      if (!cursor) break;
+      depth += 1;
+    }
+    structurePayloadAssert(depth <= 8, `${label} item ${JSON.stringify(itemId)} exceeds depth 8.`);
+  }
+  for (const domain of ['code', 'state']) {
+    const domainItems = [...items.values()].filter((item) => item.domain === domain);
+    structurePayloadAssert(!domainItems.length || domainItems.some((item) => item.parent === undefined), `${label} ${domain} domain has no root.`);
+  }
+
+  const relationIds = new Set();
+  structure.relations.forEach((relation, index) => {
+    const at = `${label} relation ${index}`;
+    structurePayloadObject(relation, at);
+    structurePayloadKeys(relation, ['id', 'from', 'to', 'kind', 'label', 'sourceRefs'], at);
+    structurePayloadAssert(INTERNAL_STRUCTURE_ID.test(relation.id || '') && !relationIds.has(relation.id), `${at} has an invalid or duplicate id.`);
+    relationIds.add(relation.id);
+    structurePayloadAssert(INTERNAL_STRUCTURE_RELATION_KINDS.has(relation.kind), `${at} has an invalid kind.`);
+    const from = items.get(relation.from);
+    const to = items.get(relation.to);
+    structurePayloadAssert(from && to, `${at} has a missing endpoint.`);
+    const validDomains = ['reads', 'writes'].includes(relation.kind)
+      ? from.domain === 'code' && to.domain === 'state'
+      : from.domain === 'code' && to.domain === 'code';
+    structurePayloadAssert(validDomains, `${at} has invalid ${from.domain} to ${to.domain} endpoints for ${relation.kind}.`);
+    if (relation.label !== undefined) structurePayloadText(relation.label, 80, `${at} label`);
+    structurePayloadAssert(Array.isArray(relation.sourceRefs) && relation.sourceRefs.length > 0 && relation.sourceRefs.length <= 3 && new Set(relation.sourceRefs).size === relation.sourceRefs.length,
+      `${at} sourceRefs must contain one to three unique source ids.`);
+    const roles = relation.sourceRefs.map((sourceId) => {
+      structurePayloadAssert(sources.has(sourceId), `${at} references missing source ${JSON.stringify(sourceId)}.`);
+      return sources.get(sourceId).role;
+    });
+    if (['calls', 'reads', 'writes', 'creates'].includes(relation.kind)) {
+      structurePayloadAssert(roles.some((role) => INTERNAL_STRUCTURE_RELATION_EVIDENCE_ROLES.has(role)), `${at} lacks semantic source evidence.`);
+    }
+  });
+}
+
+export function parseInternalStructurePayload(encoded) {
   const bytes = Buffer.byteLength(encoded);
-  if (bytes > DEVELOPER_GUIDE_MEMBER_BYTES) {
-    throw new Error(`Rendered developer guide payload is ${bytes} UTF-8 bytes; limit ${DEVELOPER_GUIDE_MEMBER_BYTES}.`);
+  if (bytes > INTERNAL_STRUCTURE_MEMBER_BYTES) {
+    throw new Error(`Rendered internal structure payload is ${bytes} UTF-8 bytes; limit ${INTERNAL_STRUCTURE_MEMBER_BYTES}.`);
   }
   if (/[<>&]/.test(encoded)) {
-    throw new Error('Rendered developer guide payload must use HTML-safe JSON escaping.');
+    throw new Error('Rendered internal structure payload must use HTML-safe JSON escaping.');
   }
   const chunks = JSON.parse(encoded);
   if (!Array.isArray(chunks) || chunks.length === 0 || chunks.some((chunk) => typeof chunk !== 'string')) {
-    throw new Error('Rendered developer guide payload must be a non-empty JSON array of string chunks.');
+    throw new Error('Rendered internal structure payload must be a non-empty JSON array of string chunks.');
   }
-  const payload = guidePayloadObject(JSON.parse(chunks.join('')), 'Rendered developer guide payload');
-  if (payload.schemaVersion !== 1) throw new Error('Rendered developer guide payload must use schemaVersion 1.');
-  const nodes = guidePayloadObject(payload.nodes, 'Rendered developer guide nodes');
+  const payload = structurePayloadObject(JSON.parse(chunks.join('')), 'Rendered internal structure payload');
+  structurePayloadKeys(payload, ['schemaVersion', 'nodes'], 'Rendered internal structure payload');
+  if (payload.schemaVersion !== 1) throw new Error('Rendered internal structure payload must use schemaVersion 1.');
+  const nodes = structurePayloadObject(payload.nodes, 'Rendered internal structure nodes');
   const entries = Object.entries(nodes);
-  if (entries.length === 0) throw new Error('Rendered developer guide nodes must not be empty.');
+  if (entries.length === 0) throw new Error('Rendered internal structure nodes must not be empty.');
 
   let itemCount = 0;
+  let relationCount = 0;
+  let sourceCount = 0;
   for (const [nodeId, candidate] of entries) {
-    const guide = guidePayloadObject(candidate, `Rendered developer guide node ${JSON.stringify(nodeId)}`);
-    const nodeBytes = Buffer.byteLength(serializeScriptJson(guide));
-    if (nodeBytes > DEVELOPER_GUIDE_NODE_BYTES) {
-      throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} is ${nodeBytes} UTF-8 bytes; limit ${DEVELOPER_GUIDE_NODE_BYTES}.`);
+    structurePayloadAssert(INTERNAL_STRUCTURE_ID.test(nodeId), `Rendered internal structure node id ${JSON.stringify(nodeId)} is invalid.`);
+    const structure = structurePayloadObject(candidate, `Rendered internal structure node ${JSON.stringify(nodeId)}`);
+    const nodeBytes = Buffer.byteLength(serializeScriptJson(structure));
+    if (nodeBytes > INTERNAL_STRUCTURE_NODE_BYTES) {
+      throw new Error(`Rendered internal structure node ${JSON.stringify(nodeId)} is ${nodeBytes} UTF-8 bytes; limit ${INTERNAL_STRUCTURE_NODE_BYTES}.`);
     }
-    if (!Array.isArray(guide.sections) || guide.sections.length === 0) {
-      throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} must contain sections.`);
-    }
-    for (const section of guide.sections) {
-      if (!Array.isArray(section?.items) || section.items.length === 0) {
-        throw new Error(`Rendered developer guide node ${JSON.stringify(nodeId)} contains an empty or invalid section.`);
-      }
-      itemCount += section.items.length;
-    }
+    validateRenderedStructure(nodeId, structure);
+    sourceCount += structure.sources.length;
+    itemCount += structure.items.length;
+    relationCount += structure.relations.length;
   }
-  return { payload, nodeCount: entries.length, itemCount, bytes };
+  return { payload, nodeCount: entries.length, itemCount, relationCount, sourceCount, bytes };
 }
 
 export function serializeScriptJson(value, space) {
@@ -365,10 +486,10 @@ export function serializeChunkedScriptJson(value, maxLineBytes = 8000) {
   return `[\n${chunks.map((chunk) => `  ${serializeScriptJson(chunk)}`).join(',\n')}\n]`;
 }
 
-// Budget diagnostics point at the first authored guide whose inclusion crosses
+// Budget diagnostics point at the first authored structure whose inclusion crosses
 // the limit. Computing prefixes only on the rejected path keeps normal delivery
 // linear while preserving the exact bytes used by the emitted member payload.
-export function findDeveloperGuideBudgetContributor(components, nodes, {
+export function findInternalStructureBudgetContributor(components, nodes, {
   baseBytes = 0,
   limit,
 } = {}) {
@@ -406,7 +527,7 @@ export function applyTemplate(template, {
   visualPreset = 'classic',
   guidedViews = [],
   sourceEvidence = null,
-  developerGuide = null,
+  internalStructure = null,
   atlasContext = null,
 }) {
   if (!SVG_SLOT_RE.test(template)) {
@@ -429,8 +550,8 @@ export function applyTemplate(template, {
   if (sourceEvidence && !template.includes(SOURCE_EVIDENCE_PLACEHOLDER)) {
     throw new Error(`applyTemplate: repository evidence requires placeholder ${JSON.stringify(SOURCE_EVIDENCE_PLACEHOLDER)}`);
   }
-  if (developerGuide && !template.includes(DEVELOPER_GUIDE_PLACEHOLDER)) {
-    throw new Error(`applyTemplate: developer guide requires placeholder ${JSON.stringify(DEVELOPER_GUIDE_PLACEHOLDER)}`);
+  if (internalStructure && !template.includes(INTERNAL_STRUCTURE_PLACEHOLDER)) {
+    throw new Error(`applyTemplate: internal structure requires placeholder ${JSON.stringify(INTERNAL_STRUCTURE_PLACEHOLDER)}`);
   }
   // Function replacers: a literal `$&`, `$'`, `$\`` or `$$` in titles, labels,
   // or rendered SVG must not be interpreted as a replacement pattern.
@@ -462,8 +583,8 @@ export function applyTemplate(template, {
     .replace(SOURCE_EVIDENCE_PLACEHOLDER, () => sourceEvidence
       ? `    <script id="archify-source-evidence-data" type="application/json">${sourceEvidenceJson}</script>`
       : '')
-    .replace(DEVELOPER_GUIDE_PLACEHOLDER, () => developerGuide
-      ? `    <script id="archify-developer-guide-data" type="application/json">${developerGuide.encoded}</script>`
+    .replace(INTERNAL_STRUCTURE_PLACEHOLDER, () => internalStructure
+      ? `    <script id="archify-internal-structure-data" type="application/json">${internalStructure.encoded}</script>`
       : '');
 }
 

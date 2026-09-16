@@ -46,20 +46,23 @@ export function readAtlasBundle(payload) {
     throw error;
   }
   const visitedMetadata = new WeakSet();
-  function rejectGuideBodyMetadata(value, path) {
+  function rejectStructureBodyMetadata(value, path) {
     if (!value || typeof value !== 'object') return;
     if (visitedMetadata.has(value)) return;
     visitedMetadata.add(value);
+    if (Array.isArray(value.sources) && Array.isArray(value.items) && Array.isArray(value.relations)) {
+      invalid('Internal structure bodies belong only to member documents.', path);
+    }
     if (record(value?.nodes) && Object.values(value.nodes).some(node =>
-      record(node) && record(node.summary) && Array.isArray(node.sections))) {
-      invalid('Developer guide bodies belong only to member documents.', path);
+      record(node) && Array.isArray(node.sources) && Array.isArray(node.items) && Array.isArray(node.relations))) {
+      invalid('Internal structure bodies belong only to member documents.', path);
     }
     for (const [key, nested] of Object.entries(value)) {
       const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
-      if (/guide(?:body|data|payload|copy|content|document|nodes?)$/.test(normalized)) {
-        invalid('Developer guide bodies belong only to member documents.', `${path}.${key}`);
+      if (/structure(?:body|data|payload|copy|content|document)$/.test(normalized)) {
+        invalid('Internal structure bodies belong only to member documents.', `${path}.${key}`);
       }
-      rejectGuideBodyMetadata(nested, `${path}.${key}`);
+      rejectStructureBodyMetadata(nested, `${path}.${key}`);
     }
   }
   if (!record(payload) || ![1, 2].includes(payload.bundle_version)) invalid('Unsupported Atlas bundle version.', 'bundle_version');
@@ -78,32 +81,39 @@ export function readAtlasBundle(payload) {
       !Array.isArray(bundle.diagramIds) || !bundle.diagramIds.length || new Set(bundle.diagramIds).size !== bundle.diagramIds.length ||
       !bundle.diagramIds.includes(bundle.entry) || Object.keys(bundle.members).length !== bundle.diagramIds.length ||
       !Array.isArray(bundle.details) || !Array.isArray(bundle.references)) invalid('Atlas member inventory is invalid.', 'members');
-  if (Object.keys(bundle).some(key => !['bundle_version', 'entry', 'meta', 'diagramIds', 'details', 'references', 'members'].includes(key))) invalid('Unexpected Atlas metadata; guide bodies belong only to member documents.', 'metadata');
-  rejectGuideBodyMetadata(bundle.meta, 'meta');
+  if (Object.keys(bundle).some(key => !['bundle_version', 'entry', 'meta', 'diagramIds', 'details', 'references', 'members'].includes(key))) invalid('Unexpected Atlas metadata; internal structure bodies belong only to member documents.', 'metadata');
+  rejectStructureBodyMetadata(bundle.meta, 'meta');
   if (payload.bundle_version === 2 && Object.keys(payload.documents).length !== bundle.diagramIds.length) invalid('Atlas document inventory is invalid.', 'documents');
-  let guideBytes = 0;
+  let structureBytes = 0;
   for (const id of bundle.diagramIds) {
     if (typeof id !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(id) ||
         !Object.hasOwn(bundle.members, id) || !record(bundle.members[id])) invalid('Atlas member inventory is invalid.', `members.${id}`);
     const member = bundle.members[id];
-    if (Object.keys(member).some(key => !['title', 'nodes', 'relations', 'views', 'parentContext', 'html', 'check', 'receipts', 'evidence', 'guideNodes'].includes(key))) invalid('Unexpected member metadata; guide bodies belong only to its document.', `members.${id}`);
+    if (Object.keys(member).some(key => !['title', 'nodes', 'relations', 'views', 'parentContext', 'html', 'check', 'receipts', 'evidence', 'structureNodes'].includes(key))) invalid('Unexpected member metadata; internal structure bodies belong only to its document.', `members.${id}`);
     if (typeof member.title !== 'string' || !['nodes', 'relations', 'views', 'parentContext'].every(key => Array.isArray(member[key]))) invalid('Invalid Atlas member navigation metadata.', `members.${id}`);
     for (const key of ['check', 'receipts', 'evidence', 'parentContext']) {
-      rejectGuideBodyMetadata(member[key], `members.${id}.${key}`);
+      rejectStructureBodyMetadata(member[key], `members.${id}.${key}`);
     }
-    const guides = member.guideNodes;
-    if (guides !== undefined && (!record(guides) || Object.entries(guides).some(([node, sections]) => !member.nodes.includes(node) ||
-        !Array.isArray(sections) || !sections.length || new Set(sections).size !== sections.length ||
-        sections.some(kind => !['flow', 'interfaces', 'state', 'constraints', 'change_points'].includes(kind))))) invalid('Invalid developer guide node inventory.', `members.${id}.guideNodes`);
-    const nodeCount = Object.keys(guides || {}).length;
-    const receipt = member.receipts?.developerGuide;
+    const structures = member.structureNodes;
+    if (structures !== undefined && (!record(structures) || Object.entries(structures).some(([node, domains]) =>
+      !member.nodes.includes(node) || !record(domains) || !Object.keys(domains).length ||
+      Object.keys(domains).some(domain => !['code', 'state'].includes(domain)) ||
+      Object.values(domains).some(items => !Array.isArray(items) || !items.length || new Set(items).size !== items.length)))) {
+      invalid('Invalid internal structure node inventory.', `members.${id}.structureNodes`);
+    }
+    const nodeCount = Object.keys(structures || {}).length;
+    const receipt = member.receipts?.internalStructure;
     if (nodeCount) {
-      if (!record(receipt) || Object.keys(receipt).length !== 5 || receipt.schemaVersion !== 1 || receipt.nodeCount !== nodeCount ||
-          !Number.isSafeInteger(receipt.itemCount) || receipt.itemCount < Object.values(guides).reduce((count, sections) => count + sections.length, 0) ||
-          !Number.isSafeInteger(receipt.bytes) || receipt.bytes <= 0 || receipt.bytes > 64 * 1024 || !/^[a-f0-9]{64}$/.test(receipt.sha256 || '')) invalid('Invalid developer guide receipt.', `members.${id}.receipts.developerGuide`);
-      guideBytes += receipt.bytes;
-      if (guideBytes > 128 * 1024) invalid('Atlas developer guide payload exceeds 131072 bytes.', `members.${id}.receipts.developerGuide.bytes`);
-    } else if (receipt !== undefined) invalid('Developer guide receipt has no matching guide nodes.', `members.${id}.receipts.developerGuide`);
+      const inventoryItems = Object.values(structures).reduce((count, domains) =>
+        count + Object.values(domains).reduce((sum, items) => sum + items.length, 0), 0);
+      if (!record(receipt) || Object.keys(receipt).length !== 7 || receipt.schemaVersion !== 1 || receipt.nodeCount !== nodeCount ||
+          !Number.isSafeInteger(receipt.itemCount) || receipt.itemCount !== inventoryItems ||
+          !Number.isSafeInteger(receipt.relationCount) || receipt.relationCount < 0 ||
+          !Number.isSafeInteger(receipt.sourceCount) || receipt.sourceCount < nodeCount ||
+          !Number.isSafeInteger(receipt.bytes) || receipt.bytes <= 0 || receipt.bytes > 256 * 1024 || !/^[a-f0-9]{64}$/.test(receipt.sha256 || '')) invalid('Invalid internal structure receipt.', `members.${id}.receipts.internalStructure`);
+      structureBytes += receipt.bytes;
+      if (structureBytes > 512 * 1024) invalid('Atlas internal structure payload exceeds 524288 bytes.', `members.${id}.receipts.internalStructure.bytes`);
+    } else if (receipt !== undefined) invalid('Internal structure receipt has no matching structure nodes.', `members.${id}.receipts.internalStructure`);
     if (payload.bundle_version === 1) {
       if (typeof bundle.members[id].html !== 'string') invalid('Missing Atlas member HTML.', `members.${id}.html`);
     } else {

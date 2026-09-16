@@ -311,124 +311,124 @@ test('a restored camera does not qualify activation before its final layout sett
   assert.equal(runtime.address.canActivate(), true);
 });
 
-test('a committed guide publishes its reading snapshot together with the retained graph camera', async () => {
+test('a committed structure publishes its reading snapshot together with the retained graph camera', async () => {
   const runtime = bridge();
-  const guide = { surface: 'guide', nodeId: 'tools', section: 'interfaces', scrollTop: 164 };
-  runtime.context.Archify.developerGuide = {
-    syncAddress: () => Promise.resolve(), surface: () => 'guide', snapshot: () => guide,
+  const structure = { surface: 'structure', nodeId: 'tools', section: 'code', scrollTop: 164 };
+  runtime.context.Archify.internalStructure = {
+    syncAddress: () => Promise.resolve(), surface: () => 'structure', snapshot: () => structure,
   };
-  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide&section=interfaces' });
+  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure&section=interfaces' });
   assert.equal(runtime.address.activate(), true);
-  assert.deepEqual(plain(runtime.address.snapshot().guide), guide);
+  assert.deepEqual(plain(runtime.address.snapshot().structure), structure);
   assert.equal(runtime.address.snapshot().camera.scale, 1);
-  assert.equal(runtime.messages.find(message => message.type === 'ready').surface, 'guide');
-  assert.deepEqual(runtime.messages.at(-1).snapshot.guide, guide);
-  assert.ok(!runtime.calls.some(call => Array.isArray(call) && call[0] === 'sync'), 'Guide activation must not reframe its hidden graph');
+  assert.equal(runtime.messages.find(message => message.type === 'ready').surface, 'structure');
+  assert.deepEqual(runtime.messages.at(-1).snapshot.structure, structure);
+  assert.ok(!runtime.calls.some(call => Array.isArray(call) && call[0] === 'sync'), 'Structure activation must not reframe its hidden graph');
 });
 
-test('candidate readiness waits for both guide rendering and guide scroll restoration', async () => {
+test('candidate readiness waits for both structure rendering and structure scroll restoration', async () => {
   const runtime = bridge(), stages = [];
   let releaseRender, releaseRestore, surface = 'graph';
-  const render = new Promise(resolve => { releaseRender = () => { surface = 'guide'; resolve(); }; });
+  const render = new Promise(resolve => { releaseRender = () => { surface = 'structure'; resolve(); }; });
   const restored = new Promise(resolve => { releaseRestore = resolve; });
   const reading = { camera: { centerX: 830, centerY: 412, scale: 1.75 }, scrollX: 0, scrollY: 123,
-    guide: { surface: 'guide', nodeId: 'tools', section: 'interfaces', scrollTop: 211 } };
-  runtime.context.Archify.developerGuide = {
+    structure: { surface: 'structure', nodeId: 'tools', section: 'code', scrollTop: 211 } };
+  runtime.context.Archify.internalStructure = {
     syncAddress(options) { stages.push(['sync', plain(options)]); return render; },
     restore(value, options) { stages.push(['restore', plain(value), plain(options)]); return restored; },
-    surface: () => surface, snapshot: () => reading.guide,
+    surface: () => surface, snapshot: () => reading.structure,
   };
-  await runtime.initialize(reading, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide&section=interfaces' });
+  await runtime.initialize(reading, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure&section=interfaces' });
   assert.equal(stages[0][0], 'sync');
   assert.equal(stages[0][1].history, false);
   assert.equal(runtime.address.canActivate(), false);
   assert.deepEqual(runtime.messages.map(message => message.type), ['bridge-ready']);
   releaseRender(); await runtime.flush();
-  assert.deepEqual(stages.at(-1).slice(0, 2), ['restore', reading.guide]);
+  assert.deepEqual(stages.at(-1).slice(0, 2), ['restore', reading.structure]);
   assert.equal(stages.at(-1)[2].focus, false);
-  assert.equal(runtime.address.canActivate(), false, 'The first rendered guide is not ready before restoring reading position');
+  assert.equal(runtime.address.canActivate(), false, 'The first rendered structure is not ready before restoring reading position');
   releaseRestore(); await runtime.flush();
   assert.equal(runtime.address.canActivate(), true);
   assert.equal(runtime.address.activate(), true);
   assert.deepEqual(plain(runtime.address.snapshot()), reading);
 });
 
-test('guide rendering failures report initialization errors without activity or a ready message', async () => {
+test('structure rendering failures report initialization errors without activity or a ready message', async () => {
   const runtime = bridge();
-  runtime.context.Archify.developerGuide = {
-    syncAddress: () => Promise.reject(new Error('fixture guide failed')), surface: () => 'graph',
+  runtime.context.Archify.internalStructure = {
+    syncAddress: () => Promise.reject(new Error('fixture structure failed')), surface: () => 'graph',
   };
-  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide' });
+  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure' });
   assert.deepEqual(runtime.messages.map(message => message.type), ['bridge-ready', 'error']);
-  assert.match(runtime.messages.at(-1).message, /fixture guide failed/);
+  assert.match(runtime.messages.at(-1).message, /fixture structure failed/);
   assert.equal(runtime.address.canActivate(), false);
   assert.equal(runtime.address.active, false);
 });
 
-test('a missing guide reader cannot qualify a graph as a requested guide', async () => {
+test('a missing structure reader cannot qualify a graph as a requested structure', async () => {
   const runtime = bridge();
-  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide' });
+  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure' });
   assert.deepEqual(runtime.messages.map(message => message.type), ['bridge-ready', 'error']);
   assert.equal(runtime.address.canActivate(), false);
 });
 
-test('the new Viewer may resolve a valid guide address to its missing-content reading surface', async () => {
+test('the new Viewer may resolve a valid structure address to its missing-content reading surface', async () => {
   const runtime = bridge();
-  runtime.context.Archify.developerGuide = {
-    available: () => false, syncAddress: () => Promise.resolve(), surface: () => 'guide',
-    snapshot: () => ({ surface: 'guide', nodeId: 'tools', section: null, scrollTop: 0 }),
+  runtime.context.Archify.internalStructure = {
+    available: () => false, syncAddress: () => Promise.resolve(), surface: () => 'structure',
+    snapshot: () => ({ surface: 'structure', nodeId: 'tools', section: null, scrollTop: 0 }),
   };
-  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide' });
+  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure' });
   assert.deepEqual(runtime.messages.map(message => message.type), ['bridge-ready', 'ready']);
   assert.equal(runtime.address.canActivate(), true);
   assert.equal(runtime.address.activate(), true);
-  assert.equal(runtime.address.snapshot().guide.nodeId, 'tools');
+  assert.equal(runtime.address.snapshot().structure.nodeId, 'tools');
 });
 
 test('a resolved reader promise cannot report ready for the wrong visible surface', async () => {
   const runtime = bridge();
-  runtime.context.Archify.developerGuide = { syncAddress: () => Promise.resolve(), surface: () => 'graph' };
-  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide' });
+  runtime.context.Archify.internalStructure = { syncAddress: () => Promise.resolve(), surface: () => 'graph' };
+  await runtime.initialize(undefined, { active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure' });
   assert.deepEqual(runtime.messages.map(message => message.type), ['bridge-ready', 'error']);
   assert.equal(runtime.address.canActivate(), false);
 });
 
-test('graph re-preparation synchronizes the surface and ignores an obsolete guide result', async () => {
+test('graph re-preparation synchronizes the surface and ignores an obsolete structure result', async () => {
   const runtime = bridge();
-  let surface = 'graph', releaseGuide;
+  let surface = 'graph', releaseStructure;
   const restored = [];
-  runtime.context.Archify.developerGuide = {
+  runtime.context.Archify.internalStructure = {
     syncAddress() {
       const params = new URLSearchParams(runtime.address.location.hash.slice(1));
-      if (params.get('inspect') === 'guide') return new Promise(resolve => { releaseGuide = resolve; });
+      if (params.get('inspect') === 'structure') return new Promise(resolve => { releaseStructure = resolve; });
       surface = 'graph'; return Promise.resolve();
     },
     restore(value) { restored.push(plain(value)); }, surface: () => surface, snapshot: () => ({ surface }),
   };
   await runtime.initialize(undefined, { active: false });
-  const old = runtime.address.prepare({ href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide',
-    snapshot: { guide: { surface: 'guide', section: 'flow', scrollTop: 400 } } });
+  const old = runtime.address.prepare({ href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure',
+    snapshot: { structure: { surface: 'structure', section: 'code', scrollTop: 400 } } });
   await new Promise(resolve => setImmediate(resolve));
   const graph = runtime.address.prepare({ href: 'https://example.test/maka.html#diagram=runtime&focus=tools',
-    snapshot: { camera: { centerX: 700, centerY: 300, scale: 1.3 }, scrollX: 0, scrollY: 30, guide: { surface: 'graph' } } });
+    snapshot: { camera: { centerX: 700, centerY: 300, scale: 1.3 }, scrollX: 0, scrollY: 30, structure: { surface: 'graph' } } });
   await runtime.flush();
   assert.equal(await graph, true);
-  releaseGuide(); await runtime.flush();
+  releaseStructure(); await runtime.flush();
   assert.equal(await old, false);
-  assert.deepEqual(restored, [{ surface: 'graph' }], 'The old result cannot restore its guide state into the latest graph');
+  assert.deepEqual(restored, [{ surface: 'graph' }], 'The old result cannot restore its structure state into the latest graph');
   assert.equal(runtime.address.canActivate(), true);
 });
 
-test('revocation while a guide renders prevents late restoration and readiness', async () => {
+test('revocation while a structure renders prevents late restoration and readiness', async () => {
   const runtime = bridge();
   let release;
   const restored = [];
-  runtime.context.Archify.developerGuide = {
+  runtime.context.Archify.internalStructure = {
     syncAddress: () => new Promise(resolve => { release = resolve; }),
-    restore: value => restored.push(value), surface: () => 'guide',
+    restore: value => restored.push(value), surface: () => 'structure',
   };
-  await runtime.initialize({ guide: { surface: 'guide', section: 'flow' } }, {
-    active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=guide',
+  await runtime.initialize({ structure: { surface: 'structure', section: 'code' } }, {
+    active: false, href: 'https://example.test/maka.html#diagram=runtime&focus=tools&inspect=structure',
   });
   runtime.address.revoke(); release(); await runtime.flush();
   assert.deepEqual(restored, []);

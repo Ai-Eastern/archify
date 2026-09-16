@@ -73,12 +73,12 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function developerGuidePayload(html) {
+function internalStructurePayload(html) {
   const matches = [...html.matchAll(
-    /<script id="archify-developer-guide-data" type="application\/json">([\s\S]*?)<\/script>/g,
+    /<script id="archify-internal-structure-data" type="application\/json">([\s\S]*?)<\/script>/g,
   )];
   if (matches.length !== 1) {
-    throw new Error(`packaged Architecture must contain one developer guide payload, found ${matches.length}`);
+    throw new Error(`packaged Architecture must contain one internal structure payload, found ${matches.length}`);
   }
   const body = matches[0][1];
   let chunks;
@@ -90,33 +90,32 @@ function developerGuidePayload(html) {
     }
     data = JSON.parse(chunks.join(''));
   } catch (error) {
-    throw new Error(`packaged developer guide payload is not decodable: ${error.message}`);
+    throw new Error(`packaged internal structure payload is not decodable: ${error.message}`);
   }
   if (data?.schemaVersion !== 1 || !data.nodes || Array.isArray(data.nodes)
     || typeof data.nodes !== 'object') {
-    throw new Error('packaged developer guide payload has an invalid envelope');
+    throw new Error('packaged internal structure payload has an invalid envelope');
   }
   return { body, data };
 }
 
-function expectedDeveloperGuideReceipt(payload) {
-  const guides = Object.values(payload.data.nodes);
+function expectedInternalStructureReceipt(payload) {
+  const structures = Object.values(payload.data.nodes);
   return {
     schemaVersion: 1,
-    nodeCount: guides.length,
-    itemCount: guides.reduce((count, guide) => count + guide.sections.reduce(
-      (subtotal, section) => subtotal + section.items.length,
-      0,
-    ), 0),
+    nodeCount: structures.length,
+    itemCount: structures.reduce((count, structure) => count + structure.items.length, 0),
+    relationCount: structures.reduce((count, structure) => count + structure.relations.length, 0),
+    sourceCount: structures.reduce((count, structure) => count + structure.sources.length, 0),
     bytes: Buffer.byteLength(payload.body),
     sha256: sha256(payload.body),
   };
 }
 
-function requireDeveloperGuideReceipt(actual, expected, context) {
-  for (const field of ['schemaVersion', 'nodeCount', 'itemCount', 'bytes', 'sha256']) {
+function requireInternalStructureReceipt(actual, expected, context) {
+  for (const field of ['schemaVersion', 'nodeCount', 'itemCount', 'relationCount', 'sourceCount', 'bytes', 'sha256']) {
     if (actual?.[field] !== expected[field]) {
-      throw new Error(`${context} developer guide receipt has invalid ${field}`);
+      throw new Error(`${context} internal structure receipt has invalid ${field}`);
     }
   }
 }
@@ -354,36 +353,36 @@ try {
   run(['render', 'architecture', path.join(skillRoot, 'examples', fixtures[0][1]), deployment]);
   run(['check', deployment]);
 
-  const guideRepository = path.join(scratch, 'guide-repository');
-  fs.mkdirSync(path.join(guideRepository, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(guideRepository, 'src', 'handler.js'), [
+  const structureRepository = path.join(scratch, 'structure-repository');
+  fs.mkdirSync(path.join(structureRepository, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(structureRepository, 'src', 'handler.js'), [
     'export function registerHandler(input) {',
     '  return input;',
     '}',
     '',
   ].join('\n'));
-  runGit(guideRepository, ['init', '--quiet']);
-  runGit(guideRepository, ['config', 'user.name', 'Archify Package Smoke']);
-  runGit(guideRepository, ['config', 'user.email', 'archify@example.test']);
-  runGit(guideRepository, ['config', 'commit.gpgSign', 'false']);
-  const guideRepositoryUrl = 'https://github.com/example/archify-package-guide.git';
-  runGit(guideRepository, ['remote', 'add', 'origin', guideRepositoryUrl]);
-  runGit(guideRepository, ['add', 'src/handler.js']);
-  runGit(guideRepository, ['commit', '--quiet', '-m', 'developer guide fixture']);
-  const guideRevision = runGit(guideRepository, ['rev-parse', 'HEAD']);
-  if (!/^[a-f0-9]{40}$/.test(guideRevision)) {
-    throw new Error('package developer guide fixture did not produce a fixed Git revision');
+  runGit(structureRepository, ['init', '--quiet']);
+  runGit(structureRepository, ['config', 'user.name', 'Archify Package Smoke']);
+  runGit(structureRepository, ['config', 'user.email', 'archify@example.test']);
+  runGit(structureRepository, ['config', 'commit.gpgSign', 'false']);
+  const structureRepositoryUrl = 'https://github.com/example/archify-package-structure.git';
+  runGit(structureRepository, ['remote', 'add', 'origin', structureRepositoryUrl]);
+  runGit(structureRepository, ['add', 'src/handler.js']);
+  runGit(structureRepository, ['commit', '--quiet', '-m', 'internal structure fixture']);
+  const structureRevision = runGit(structureRepository, ['rev-parse', 'HEAD']);
+  if (!/^[a-f0-9]{40}$/.test(structureRevision)) {
+    throw new Error('package internal structure fixture did not produce a fixed Git revision');
   }
 
-  const guideSentinel = 'package-guide-only-sentinel';
-  const guideDiagram = {
+  const structureSentinel = 'package-structure-only-sentinel';
+  const structureDiagram = {
     schema_version: 1,
     diagram_type: 'architecture',
     meta: {
-      title: 'Package Developer Guide',
+      title: 'Package Internal Structure',
       repository: {
-        url: guideRepositoryUrl,
-        revision: guideRevision,
+        url: structureRepositoryUrl,
+        revision: structureRevision,
         link_mode: 'local-only',
       },
     },
@@ -393,114 +392,104 @@ try {
       label: 'Request Handler',
       pos: [120, 120],
       size: [180, 72],
-      sources: [{
-        id: 'handler-export',
-        role: 'export',
-        path: 'src/handler.js',
-        line: 1,
-        end_line: 3,
-        symbol: 'registerHandler',
-      }],
-      developer_guide: {
-        implementation_scope: 'repository',
-        summary: {
-          text: guideSentinel,
-          source_refs: ['handler-export'],
-        },
-        sections: [{
-          kind: 'interfaces',
-          items: [{
-            id: 'register-handler',
-            title: 'registerHandler',
-            code: 'registerHandler(input)',
-            direction: 'provided',
-            text: 'Accepts one input and returns it to the caller.',
-            source_refs: ['handler-export'],
-          }],
+      internal_structure: {
+        sources: [{
+          id: 'handler-definition',
+          role: 'definition',
+          path: 'src/handler.js',
+          line: 1,
+          end_line: 3,
+          symbol: 'registerHandler',
         }],
+        items: [
+          { id: 'src', domain: 'code', kind: 'directory', label: 'src', summary: structureSentinel },
+          { id: 'handler-file', domain: 'code', kind: 'file', label: 'handler.js', parent: 'src', summary: 'Request handler implementation.', source_refs: ['handler-definition'] },
+          { id: 'register-handler', domain: 'code', kind: 'function', label: 'registerHandler', parent: 'handler-file', signature: 'registerHandler(input)', summary: 'Accepts one input and returns it.', source_refs: ['handler-definition'] },
+        ],
+        relations: [],
       },
     }],
   };
-  const guideInput = path.join(guideRepository, 'guide.architecture.json');
-  fs.writeFileSync(guideInput, `${JSON.stringify(guideDiagram, null, 2)}\n`);
-  const guideFirstOutput = path.join(scratch, 'guide-first.html');
-  const guideSecondOutput = path.join(scratch, 'guide-second.html');
-  const guideFirstReceipt = JSON.parse(run([
-    'deliver', 'architecture', guideInput, guideFirstOutput,
-    '--repo-root', guideRepository, '--json',
+  const structureInput = path.join(structureRepository, 'structure.architecture.json');
+  fs.writeFileSync(structureInput, `${JSON.stringify(structureDiagram, null, 2)}\n`);
+  const structureFirstOutput = path.join(scratch, 'structure-first.html');
+  const structureSecondOutput = path.join(scratch, 'structure-second.html');
+  const structureFirstReceipt = JSON.parse(run([
+    'deliver', 'architecture', structureInput, structureFirstOutput,
+    '--repo-root', structureRepository, '--json',
   ]));
-  const guideSecondReceipt = JSON.parse(run([
-    'deliver', 'architecture', guideInput, guideSecondOutput,
-    '--repo-root', guideRepository, '--json',
+  const structureSecondReceipt = JSON.parse(run([
+    'deliver', 'architecture', structureInput, structureSecondOutput,
+    '--repo-root', structureRepository, '--json',
   ]));
-  const guideFirstHtml = fs.readFileSync(guideFirstOutput, 'utf8');
-  const guideSecondHtml = fs.readFileSync(guideSecondOutput, 'utf8');
-  if (sha256(guideFirstHtml) !== sha256(guideSecondHtml)) {
-    throw new Error('packaged developer guide delivery is not byte-deterministic');
+  const structureFirstHtml = fs.readFileSync(structureFirstOutput, 'utf8');
+  const structureSecondHtml = fs.readFileSync(structureSecondOutput, 'utf8');
+  if (sha256(structureFirstHtml) !== sha256(structureSecondHtml)) {
+    throw new Error('packaged internal structure delivery is not byte-deterministic');
   }
-  const guidePayload = developerGuidePayload(guideFirstHtml);
-  const guideNode = guidePayload.data.nodes.handler;
-  if (guideNode?.summary?.text !== guideSentinel
-    || guideNode?.sections?.[0]?.items?.[0]?.id !== 'register-handler') {
-    throw new Error('packaged developer guide payload did not preserve the authored node guide');
+  const structurePayload = internalStructurePayload(structureFirstHtml);
+  const structureNode = structurePayload.data.nodes.handler;
+  if (structureNode?.items?.[0]?.summary !== structureSentinel
+    || structureNode?.items?.[2]?.id !== 'register-handler') {
+    throw new Error('packaged internal structure payload did not preserve the authored node structure');
   }
-  const guideReceipt = expectedDeveloperGuideReceipt(guidePayload);
-  requireDeveloperGuideReceipt(guideFirstReceipt.developerGuide, guideReceipt, 'first delivery');
-  requireDeveloperGuideReceipt(guideSecondReceipt.developerGuide, guideReceipt, 'second delivery');
-  if (guideFirstReceipt.evidence?.revision !== guideRevision
-    || guideFirstReceipt.evidence?.references !== 1) {
-    throw new Error('packaged developer guide delivery omitted its fixed source evidence receipt');
+  const structureReceipt = expectedInternalStructureReceipt(structurePayload);
+  requireInternalStructureReceipt(structureFirstReceipt.internalStructure, structureReceipt, 'first delivery');
+  requireInternalStructureReceipt(structureSecondReceipt.internalStructure, structureReceipt, 'second delivery');
+  if (structureFirstReceipt.evidence?.revision !== structureRevision
+    || structureFirstReceipt.evidence?.references !== 1) {
+    throw new Error('packaged internal structure delivery omitted its fixed source evidence receipt');
   }
-  const canonicalSvg = guideFirstHtml.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '';
-  if (!canonicalSvg || canonicalSvg.includes(guideSentinel)
+  const canonicalSvg = structureFirstHtml.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '';
+  if (!canonicalSvg || canonicalSvg.includes(structureSentinel)
     || canonicalSvg.includes('register-handler')) {
-    throw new Error('packaged developer guide content leaked into the canonical SVG');
+    throw new Error('packaged internal structure content leaked into the canonical SVG');
   }
 
-  const guideAtlasInput = path.join(guideRepository, 'guide.atlas.json');
-  fs.writeFileSync(guideAtlasInput, `${JSON.stringify({
+  const structureAtlasInput = path.join(structureRepository, 'structure.atlas.json');
+  fs.writeFileSync(structureAtlasInput, `${JSON.stringify({
     atlas_version: 1,
-    entry: 'guide',
-    meta: { title: 'Package Developer Guide Atlas' },
-    diagrams: { guide: { source: 'guide.architecture.json' } },
+    entry: 'structure',
+    meta: { title: 'Package Internal Structure Atlas' },
+    diagrams: { structure: { source: 'structure.architecture.json' } },
   }, null, 2)}\n`);
-  const guideAtlasFirstOutput = path.join(scratch, 'guide-atlas-first.html');
-  const guideAtlasSecondOutput = path.join(scratch, 'guide-atlas-second.html');
-  const guideAtlasFirstReceipt = JSON.parse(run([
-    'deliver', 'atlas', guideAtlasInput, guideAtlasFirstOutput,
-    '--repo-root', guideRepository, '--json',
+  const structureAtlasFirstOutput = path.join(scratch, 'structure-atlas-first.html');
+  const structureAtlasSecondOutput = path.join(scratch, 'structure-atlas-second.html');
+  const structureAtlasFirstReceipt = JSON.parse(run([
+    'deliver', 'atlas', structureAtlasInput, structureAtlasFirstOutput,
+    '--repo-root', structureRepository, '--json',
   ]));
   run([
-    'deliver', 'atlas', guideAtlasInput, guideAtlasSecondOutput,
-    '--repo-root', guideRepository, '--json',
+    'deliver', 'atlas', structureAtlasInput, structureAtlasSecondOutput,
+    '--repo-root', structureRepository, '--json',
   ]);
-  const guideAtlasFirstHtml = fs.readFileSync(guideAtlasFirstOutput, 'utf8');
-  const guideAtlasSecondHtml = fs.readFileSync(guideAtlasSecondOutput, 'utf8');
-  if (sha256(guideAtlasFirstHtml) !== sha256(guideAtlasSecondHtml)) {
-    throw new Error('packaged Atlas developer guide delivery is not byte-deterministic');
+  const structureAtlasFirstHtml = fs.readFileSync(structureAtlasFirstOutput, 'utf8');
+  const structureAtlasSecondHtml = fs.readFileSync(structureAtlasSecondOutput, 'utf8');
+  if (sha256(structureAtlasFirstHtml) !== sha256(structureAtlasSecondHtml)) {
+    throw new Error('packaged Atlas internal structure delivery is not byte-deterministic');
   }
-  requireDeveloperGuideReceipt(
-    guideAtlasFirstReceipt.members?.guide?.developerGuide,
-    guideReceipt,
+  requireInternalStructureReceipt(
+    structureAtlasFirstReceipt.members?.structure?.internalStructure,
+    structureReceipt,
     'first Atlas member',
   );
-  const invalidGuideDiagram = JSON.parse(JSON.stringify(guideDiagram));
-  invalidGuideDiagram.components[0].sources[0].symbol = 'missingHandler';
-  const invalidGuideInput = path.join(guideRepository, 'invalid-guide.architecture.json');
-  const preservedGuideOutput = path.join(scratch, 'preserved-guide.html');
-  const preservedGuideContents = 'trusted previous package artifact\n';
-  fs.writeFileSync(invalidGuideInput, `${JSON.stringify(invalidGuideDiagram, null, 2)}\n`);
-  fs.writeFileSync(preservedGuideOutput, preservedGuideContents);
-  const guideFailure = JSON.parse(runExpectFailure([
-    'deliver', 'architecture', invalidGuideInput, preservedGuideOutput,
-    '--repo-root', guideRepository, '--json',
+  const invalidStructureDiagram = JSON.parse(JSON.stringify(structureDiagram));
+  invalidStructureDiagram.components[0].internal_structure.sources[0].symbol = 'missingHandler';
+  const invalidStructureInput = path.join(structureRepository, 'invalid-structure.architecture.json');
+  const preservedStructureOutput = path.join(scratch, 'preserved-structure.html');
+  const preservedStructureContents = 'trusted previous package artifact\n';
+  fs.writeFileSync(invalidStructureInput, `${JSON.stringify(invalidStructureDiagram, null, 2)}\n`);
+  fs.writeFileSync(preservedStructureOutput, preservedStructureContents);
+  const structureFailure = JSON.parse(runExpectFailure([
+    'deliver', 'architecture', invalidStructureInput, preservedStructureOutput,
+    '--repo-root', structureRepository, '--json',
   ]));
-  if (guideFailure.ok
-    || !guideFailure.diagnostics?.some((entry) => entry.code === 'repository-evidence/symbol-missing')) {
-    throw new Error('packaged developer guide delivery did not reject invalid pinned symbol evidence');
+  if (structureFailure.ok
+    || !structureFailure.diagnostics?.some((entry) => entry.code === 'repository-evidence/symbol-missing')) {
+    throw new Error('packaged internal structure delivery did not reject invalid pinned symbol evidence');
   }
-  if (fs.readFileSync(preservedGuideOutput, 'utf8') !== preservedGuideContents) {
-    throw new Error('failed packaged developer guide delivery replaced the previous artifact');
+  if (fs.readFileSync(preservedStructureOutput, 'utf8') !== preservedStructureContents) {
+    throw new Error('failed packaged internal structure delivery replaced the previous artifact');
   }
 
   const compareReceipt = JSON.parse(run([

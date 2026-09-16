@@ -52,12 +52,13 @@ function workflowJob(workflow, name) {
   return workflow.slice(start, next === -1 ? workflow.length : start + marker.length + next);
 }
 
-test('developer-guide browser acceptance fails closed for an explicit unusable Chrome', () => {
-  const browserTest = path.join(repoRoot, 'archify', 'test', 'developer-guide-browser.test.mjs');
+test('internal-structure browser acceptance fails closed for an explicit unusable Chrome', () => {
+  const browserTest = path.join(repoRoot, 'archify', 'test', 'internal-structure-browser.test.mjs');
+  const browserArgs = ['--test', '--test-reporter=tap', browserTest];
   for (const value of ['', path.join(os.tmpdir(), 'archify-missing-chrome')]) {
     const explicitEnvironment = { ...process.env, ARCHIFY_CHROME: value };
     delete explicitEnvironment.NODE_TEST_CONTEXT;
-    const result = spawnSync(process.execPath, ['--test', browserTest], {
+    const result = spawnSync(process.execPath, browserArgs, {
       cwd: repoRoot,
       encoding: 'utf8',
       env: explicitEnvironment,
@@ -70,7 +71,7 @@ test('developer-guide browser acceptance fails closed for an explicit unusable C
   const localEnvironment = { ...process.env };
   delete localEnvironment.ARCHIFY_CHROME;
   delete localEnvironment.NODE_TEST_CONTEXT;
-  const local = spawnSync(process.execPath, ['--test', browserTest], {
+  const local = spawnSync(process.execPath, browserArgs, {
     cwd: repoRoot,
     encoding: 'utf8',
     env: localEnvironment,
@@ -79,15 +80,15 @@ test('developer-guide browser acceptance fails closed for an explicit unusable C
   assert.match(local.stdout, /# SKIP/, 'an undeclared Chrome path retains the local opt-in skip');
 });
 
-test('CI and release retain a mandatory developer-guide Chrome gate', () => {
+test('CI and release retain a mandatory internal-structure Chrome gate', () => {
   const ci = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
   const release = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
-  const ciGate = workflowStep(ci, 'Verify node developer-guide reading, history, accessibility and exports');
-  const releaseGate = workflowStep(release, 'Node developer-guide browser acceptance must pass');
+  const ciGate = workflowStep(ci, 'Verify node internal-structure reading, history, accessibility and Atlas rail transitions');
+  const releaseGate = workflowStep(release, 'Node internal-structure and Atlas rail browser acceptance must pass');
   const releaseBuild = workflowStep(release, 'Build skill archive');
 
   for (const gate of [ciGate, releaseGate]) {
-    assert.match(gate, /run: node --test test\/developer-guide-browser\.test\.mjs/);
+    assert.match(gate, /run: node --test --test-concurrency=1 test\/internal-structure-browser\.test\.mjs test\/atlas-workbench-browser\.test\.mjs/);
     assert.match(gate, /working-directory: archify/);
     assert.match(gate, /ARCHIFY_CHROME: \$\{\{ steps\.setup-chrome\.outputs\.chrome-path \}\}/);
     assert.match(gate, /ARCHIFY_CHROME_NO_SANDBOX: '1'/);
@@ -292,23 +293,23 @@ test('package smoke verifies the embedded notifier identity and local disable sw
   assert.match(source, /reason !== 'disabled'/);
 });
 
-test('package smoke detects a packaged renderer that cannot carry developer guides', () => {
+test('package smoke detects a packaged renderer that cannot carry internal structures', () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'archify-package-guide-gate-'));
   try {
     const staged = path.join(fixture, 'archify');
     stageCleanSkill({ repoRoot, destination: staged });
     const templatePath = path.join(staged, 'assets', 'template.html');
     const template = fs.readFileSync(templatePath, 'utf8');
-    assert.match(template, /<!-- ARCHIFY:DEVELOPER_GUIDE_DATA -->/);
-    fs.writeFileSync(templatePath, template.replace('<!-- ARCHIFY:DEVELOPER_GUIDE_DATA -->', ''));
+    assert.match(template, /<!-- ARCHIFY:INTERNAL_STRUCTURE_DATA -->/);
+    fs.writeFileSync(templatePath, template.replace('<!-- ARCHIFY:INTERNAL_STRUCTURE_DATA -->', ''));
 
     const result = spawnSync(
       process.execPath,
       [path.join(repoRoot, 'scripts', 'package-smoke.mjs'), staged],
       { cwd: repoRoot, encoding: 'utf8' },
     );
-    assert.notEqual(result.status, 0, 'missing packaged developer-guide slot must fail package smoke');
-    assert.match(`${result.stdout}\n${result.stderr}`, /developer guide/i);
+    assert.notEqual(result.status, 0, 'missing packaged internal-structure slot must fail package smoke');
+    assert.match(`${result.stdout}\n${result.stderr}`, /internal structure/i);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

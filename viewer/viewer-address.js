@@ -49,19 +49,19 @@
       function snapshot() {
         if (restoring || !context || !active() || !window.Archify) return null;
         var result = { camera: window.Archify.view.snapshot(), scrollX: scrollX, scrollY: scrollY };
-        var guide = window.Archify.developerGuide;
-        if (guide && typeof guide.snapshot === 'function') {
-          var guideReading = guide.snapshot();
-          if (guideReading) result.guide = guideReading;
+        var structure = window.Archify.internalStructure;
+        if (structure && typeof structure.snapshot === 'function') {
+          var structureReading = structure.snapshot();
+          if (structureReading) result.structure = structureReading;
         }
         return result;
       }
       function requestedSurface() {
-        return logical && new URLSearchParams(logical.hash.replace(/^#/, '')).get('inspect') === 'guide' ? 'guide' : 'graph';
+        return logical && new URLSearchParams(logical.hash.replace(/^#/, '')).get('inspect') === 'structure' ? 'structure' : 'graph';
       }
       function surfaceReady() {
-        var guide = window.Archify && window.Archify.developerGuide;
-        return guide && typeof guide.surface === 'function' ? guide.surface() === requestedSurface() : requestedSurface() === 'graph';
+        var structure = window.Archify && window.Archify.internalStructure;
+        return structure && typeof structure.surface === 'function' ? structure.surface() === requestedSurface() : requestedSurface() === 'graph';
       }
       function nextPaint() {
         if (revoked) return Promise.resolve();
@@ -110,10 +110,10 @@
             else api.presentation.exit();
           }
           if (api.motionGovernor && /^(live|still)$/.test(options.motion)) api.motionGovernor.setMode(options.motion, { persist: false });
-          if (api.developerGuide && typeof api.developerGuide.syncAddress === 'function') {
-            surfaceTask = api.developerGuide.syncAddress({ history: false, focus: false });
-          } else if (requestedSurface() === 'guide') {
-            throw new Error(api.locale === 'zh-CN' ? '此查看器无法显示开发指南。' : 'This viewer cannot display a developer guide.');
+          if (api.internalStructure && typeof api.internalStructure.syncAddress === 'function') {
+            surfaceTask = api.internalStructure.syncAddress({ history: false, focus: false });
+          } else if (requestedSurface() === 'structure') {
+            throw new Error(api.locale === 'zh-CN' ? '此查看器无法显示内部结构。' : 'This viewer cannot display internal structure.');
           }
         } catch (error) { return Promise.reject(error); }
         return Promise.resolve(surfaceTask).then(function () {
@@ -126,9 +126,9 @@
           if (!current()) return false;
           if (reading && window.Archify.view.restore) window.Archify.view.restore(reading.camera);
           if (reading) window.scrollTo(reading.scrollX || 0, reading.scrollY || 0);
-          var guide = window.Archify.developerGuide;
-          if (reading && reading.guide && guide && typeof guide.restore === 'function') {
-            return guide.restore(reading.guide, { focus: false });
+          var structure = window.Archify.internalStructure;
+          if (reading && reading.structure && structure && typeof structure.restore === 'function') {
+            return structure.restore(reading.structure, { focus: false });
           }
         }).then(function () {
           if (!current()) return false;

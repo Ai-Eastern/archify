@@ -42,8 +42,8 @@ function readerFixture({ width = 1920, height = 1080, viewBox = [1260, 600],
   const header = element('header', 80);
   const guided = guidedHeight ? element('guided', guidedHeight) : null;
   const cards = cardsHeight ? element('cards', cardsHeight) : null;
-  const guide = element('guide', 1200);
-  guide.hidden = true;
+  const structure = element('structure', 1200);
+  structure.hidden = true;
   if (cards) shell.appendChild(cards);
   const svg = { viewBox: { baseVal: { width: viewBox[0], height: viewBox[1] } } };
   diagram.querySelector = () => svg;
@@ -66,7 +66,7 @@ function readerFixture({ width = 1920, height = 1080, viewBox = [1260, 600],
     documentElement: html,
     body,
     querySelector: selector => elements[selector],
-    getElementById: id => id === 'node-developer-guide' ? guide : null,
+    getElementById: id => id === 'node-internal-structure' ? structure : null,
     activeElement: null,
   };
   const context = {
@@ -87,7 +87,7 @@ function readerFixture({ width = 1920, height = 1080, viewBox = [1260, 600],
   }
   flush();
   return {
-    width, paddingRight, attributes, variables, shell, cards, guide, elements, document, svg,
+    width, paddingRight, attributes, variables, shell, cards, structure, elements, document, svg,
     reader: context.Archify.readerLayout, flush,
     measure() { const measured = context.Archify.readerLayout.measure(); flush(); return measured; },
     setOverflow(pixels) { bottom = height - 32 + pixels; },
@@ -144,31 +144,31 @@ test('selection and relocated overview cards do not change the canonical reading
   assert.equal(fixture.cards.parentNode, fixture.elements['.atlas-overview']);
 });
 
-test('developer guide height never feeds back into the preserved graph reading width', () => {
+test('internal structure height never feeds back into the preserved graph reading width', () => {
   const fixture = readerFixture({ width: 1920, height: 1080, viewBox: [1380, 840], guidedHeight: 57, cardsHeight: 180 });
   const before = fixture.reader.receipt();
   const readerRect = fixture.shell.getBoundingClientRect();
-  fixture.attributes.set('data-reader-surface', 'guide');
+  fixture.attributes.set('data-reader-surface', 'structure');
   fixture.elements['.diagram-container'].hidden = true;
   fixture.elements['.guided-views'].hidden = true;
   fixture.cards.hidden = true;
-  fixture.guide.hidden = false;
-  const guideMeasure = fixture.measure();
-  assert.equal(guideMeasure.surface, 'guide');
+  fixture.structure.hidden = false;
+  const structureMeasure = fixture.measure();
+  assert.equal(structureMeasure.surface, 'structure');
   assert.deepEqual(fixture.reader.receipt(), before);
   assert.deepEqual(fixture.shell.getBoundingClientRect(), readerRect);
   assert.equal(fixture.attributes.has('data-reader-overflow'), false);
-  fixture.guide.blockHeight = 4000;
+  fixture.structure.blockHeight = 4000;
   fixture.setOverflow(3000);
   fixture.measure();
-  assert.deepEqual(fixture.reader.receipt(), before, 'guide document height must not shrink the hidden graph');
+  assert.deepEqual(fixture.reader.receipt(), before, 'structure document height must not shrink the hidden graph');
   assert.deepEqual(fixture.svg.viewBox.baseVal, { width: 1380, height: 840 });
   fixture.attributes.set('data-reader-surface', 'graph');
   fixture.elements['.diagram-container'].hidden = false;
   fixture.elements['.guided-views'].hidden = false;
   fixture.cards.hidden = false;
   fixture.setOverflow(0);
-  fixture.guide.hidden = true;
+  fixture.structure.hidden = true;
   fixture.measure();
   assert.deepEqual(fixture.reader.receipt(), before);
   assert.deepEqual(fixture.shell.getBoundingClientRect(), readerRect);

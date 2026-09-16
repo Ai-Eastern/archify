@@ -7,6 +7,7 @@
       var header = shell && shell.querySelector('.header');
       var guided = shell && shell.querySelector('.guided-views');
       var cards = shell && shell.querySelector('.cards');
+      var internalStructureData = document.getElementById('archify-internal-structure-data');
       var atlasRail = document.querySelector('.atlas-rail');
       var atlasDirectory = document.querySelector('.atlas-directory-section');
       var atlasInspector = document.querySelector('.atlas-inspector');
@@ -53,8 +54,8 @@
           (!window.matchMedia || !window.matchMedia('print').matches)
         );
       }
-      function guideActive() {
-        return html.getAttribute('data-reader-surface') === 'guide';
+      function structureActive() {
+        return html.getAttribute('data-reader-surface') === 'structure';
       }
       function clear() {
         html.style.removeProperty('--archify-reader-width');
@@ -126,7 +127,7 @@
         if (settleFrame) cancelAnimationFrame(settleFrame);
         settleFrame = requestAnimationFrame(function () {
           settleFrame = 0;
-          if (!eligible() || guideActive() || !lastWidth) return;
+          if (!eligible() || structureActive() || !lastWidth) return;
           var overflow = Math.max(
             document.documentElement.scrollHeight,
             document.body.scrollHeight
@@ -160,7 +161,7 @@
         var viewportCap = workspace ? workspace.width : Math.max(0, window.innerWidth - chrome.bodyX);
         var minWidth = Math.min(MIN_READER_WIDTH, viewportCap);
         var maxWidth = Math.min(MAX_READER_WIDTH, viewportCap);
-        if (guideActive()) {
+        if (structureActive()) {
           if (settleFrame) cancelAnimationFrame(settleFrame);
           settleFrame = 0;
           if (!lastWidth || lastWidth < minWidth || lastWidth > maxWidth) {
@@ -173,7 +174,20 @@
             width: lastWidth,
             availableSvgHeight: 0,
             fixedHeight: 0,
-            surface: 'guide'
+            surface: 'structure'
+          };
+        }
+        if (!atlasRail && internalStructureData) {
+          if (settleFrame) cancelAnimationFrame(settleFrame);
+          settleFrame = 0;
+          applyWidth(maxWidth);
+          html.removeAttribute('data-reader-overflow');
+          return {
+            ratio: ratio,
+            width: lastWidth,
+            availableSvgHeight: 0,
+            fixedHeight: 0,
+            surface: 'graph'
           };
         }
         if (atlasRail) {
@@ -200,12 +214,18 @@
         if (frame) return;
         frame = requestAnimationFrame(measure);
       }
+      function scheduleCards() {
+        // Once a standalone wide graph has settled, inspector content may grow
+        // below it without changing the graph's camera or bounding box.
+        if (!atlasRail && lastWidth && eligible() && !structureActive()) return;
+        schedule();
+      }
       function stableSnapshot() {
         var shellRect = shell ? shell.getBoundingClientRect() : { width: 0, height: 0 };
         var diagramRect = diagram ? diagram.getBoundingClientRect() : { width: 0, height: 0 };
-        var guide = typeof document.getElementById === 'function'
-          ? document.getElementById('node-developer-guide') : null;
-        var guideRect = guide && !guide.hidden ? guide.getBoundingClientRect() : { width: 0, height: 0 };
+        var structure = typeof document.getElementById === 'function'
+          ? document.getElementById('node-internal-structure') : null;
+        var structureRect = structure && !structure.hidden ? structure.getBoundingClientRect() : { width: 0, height: 0 };
         return [
           lastWidth,
           html.getAttribute('data-reader-surface') || 'graph',
@@ -221,8 +241,8 @@
           Math.round(shellRect.height * 100) / 100,
           Math.round(diagramRect.width * 100) / 100,
           Math.round(diagramRect.height * 100) / 100,
-          Math.round(guideRect.width * 100) / 100,
-          Math.round(guideRect.height * 100) / 100
+          Math.round(structureRect.width * 100) / 100,
+          Math.round(structureRect.height * 100) / 100
         ].join('|');
       }
       function whenStable() {
@@ -245,12 +265,13 @@
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(schedule).catch(function () {});
       if (typeof ResizeObserver === 'function') {
         var resizeObserver = new ResizeObserver(schedule);
-        [header, guided, cards].forEach(function (element) { if (element) resizeObserver.observe(element); });
+        [header, guided].forEach(function (element) { if (element) resizeObserver.observe(element); });
+        if (cards) new ResizeObserver(scheduleCards).observe(cards);
       }
       if (typeof MutationObserver === 'function') {
         var contentObserver = new MutationObserver(schedule);
         if (guided) contentObserver.observe(guided, { attributes: true, childList: true, subtree: true });
-        if (cards) contentObserver.observe(cards, { attributes: true, childList: true, subtree: true });
+        if (cards) new MutationObserver(scheduleCards).observe(cards, { attributes: true, childList: true, subtree: true });
         contentObserver.observe(html, { attributes: true, attributeFilter: ['data-embed', 'data-present', 'data-reader-surface'] });
       }
       schedule();

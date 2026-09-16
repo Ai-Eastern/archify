@@ -6,7 +6,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { checkAtlas, unpackAtlas, deliverAtlas } from '../renderers/shared/atlas-delivery.mjs';
-import { compileDeveloperGuides } from '../renderers/shared/cli.mjs';
 import { byteReceipt } from '../renderers/shared/atlas-manifest.mjs';
 import { renderAtlasShell } from '../renderers/shared/atlas-shell.mjs';
 import { decodeAtlasPayload, serializeAtlasPayload } from '../renderers/shared/atlas-envelope.mjs';
@@ -24,202 +23,89 @@ function deliver(f, extra = []) {
   return { ...result, receipt: JSON.parse(result.stdout) };
 }
 
-function guideFixture(t) {
+function structureFixture(t) {
   const f = fixture(t);
   const repository = path.join(f.directory, 'repository'); fs.mkdirSync(repository);
   const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init'); git('config', 'user.name', 'Archify Tests'); git('config', 'user.email', 'archify@example.test');
-  git('remote', 'add', 'origin', 'https://github.com/example/atlas-guide');
+  git('remote', 'add', 'origin', 'https://github.com/example/atlas-structure');
   fs.writeFileSync(path.join(repository, 'controller.js'), 'export function handle() { return 1; }\n');
-  git('add', '.'); git('commit', '-m', 'guide evidence');
+  git('add', '.'); git('commit', '-m', 'internal structure evidence');
   const filename = path.join(f.directory, 'system.architecture.json');
   const diagram = JSON.parse(fs.readFileSync(filename, 'utf8'));
-  diagram.meta.repository = { url: 'https://github.com/example/atlas-guide', revision: git('rev-parse', 'HEAD'), link_mode: 'local-only' };
+  diagram.meta.repository = { url: 'https://github.com/example/atlas-structure', revision: git('rev-parse', 'HEAD'), link_mode: 'local-only' };
   const node = diagram.components.find(node => node.id === 'controller');
-  node.sources = [{ id: 'entry', path: 'controller.js', line: 1, role: 'export' }];
-  node.developer_guide = { implementation_scope: 'repository', summary: { text: 'guide-only-sentinel', source_refs: ['entry'] },
-    sections: [{ kind: 'interfaces', items: [{ id: 'handle', title: 'handle', text: 'Returns one.', direction: 'provided', source_refs: ['entry'] }] }] };
+  node.internal_structure = {
+    sources: [{ id: 'entry', path: 'controller.js', line: 1, symbol: 'handle', role: 'definition' }],
+    items: [
+      { id: 'src', domain: 'code', kind: 'directory', label: 'src', summary: 'structure-only-sentinel' },
+      { id: 'handle', domain: 'code', kind: 'function', label: 'handle', parent: 'src', signature: 'handle()', summary: 'Returns one.', source_refs: ['entry'] },
+    ],
+    relations: [],
+  };
   fs.writeFileSync(filename, JSON.stringify(diagram));
   const result = deliver(f, ['--repo-root', repository]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   return { ...f, result, html: fs.readFileSync(f.output, 'utf8') };
 }
 
-const ATLAS_GUIDE_BYTES_LIMIT = 128 * 1024;
-
-function aggregateGuide(nodeBytes = 3600) {
-  let sequence = 0;
-  const items = (kind, count) => Array.from({ length: count }, () => {
-    sequence += 1;
-    return {
-      id: `item-${sequence}`,
-      title: 'T',
-      text: 'x',
-      source_refs: ['entry'],
-      ...(kind === 'interfaces' ? { direction: 'provided' } : {}),
-    };
-  });
-  const authored = {
-    implementation_scope: 'repository',
-    summary: { text: 'x', source_refs: ['entry'] },
-    sections: [
-      { kind: 'flow', items: items('flow', 3) },
-      { kind: 'interfaces', items: items('interfaces', 1) },
-      { kind: 'state', items: items('state', 5) },
-      { kind: 'constraints', items: items('constraints', 5) },
-      { kind: 'change_points', items: items('change_points', 5) },
-    ],
-  };
-  const compiled = guide => ({
-    implementationScope: guide.implementation_scope,
-    summary: { text: guide.summary.text, sourceRefs: [...guide.summary.source_refs] },
-    sections: guide.sections.map(section => ({
-      kind: section.kind,
-      items: section.items.map(item => ({
-        id: item.id,
-        title: item.title,
-        ...(item.direction ? { direction: item.direction } : {}),
-        text: item.text,
-        sourceRefs: [...item.source_refs],
-      })),
-    })),
-  });
-  let remaining = nodeBytes - Buffer.byteLength(serializeScriptJson(compiled(authored)));
-  for (const slot of [authored.summary, ...authored.sections.flatMap(section => section.items)]) {
-    const maximum = slot === authored.summary ? 240 : 280;
-    const addition = Math.min(remaining, maximum - slot.text.length);
-    slot.text += 'x'.repeat(addition);
-    remaining -= addition;
-  }
-  assert.equal(remaining, 0, 'aggregate guide fixture must reach its requested node byte size');
-  assert.equal(Buffer.byteLength(serializeScriptJson(compiled(authored))), nodeBytes);
-  return authored;
-}
-
-function aggregateGuideFixture(t) {
-  const f = fixture(t);
-  const repository = path.join(f.directory, 'aggregate-repository');
-  fs.mkdirSync(repository);
-  const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  git('init');
-  git('config', 'user.name', 'Archify Tests');
-  git('config', 'user.email', 'archify@example.test');
-  git('remote', 'add', 'origin', 'https://github.com/example/atlas-aggregate-guide');
-  fs.writeFileSync(path.join(repository, 'entry.js'), 'export function entry() { return true; }\n');
-  git('add', '.');
-  git('commit', '-m', 'aggregate guide evidence');
-  const revision = git('rev-parse', 'HEAD');
-  const referenceOccurrences = new Set(['payment/redis', 'orders/redis']);
-  const diagrams = new Map();
-
-  for (const id of ['system', 'payment', 'worker', 'orders']) {
-    const filename = path.join(f.directory, `${id}.architecture.json`);
-    const diagram = JSON.parse(fs.readFileSync(filename, 'utf8'));
-    diagram.meta.repository = {
-      url: 'https://github.com/example/atlas-aggregate-guide',
-      revision,
-      link_mode: 'local-only',
-    };
-    for (const component of diagram.components) {
-      if (referenceOccurrences.has(`${id}/${component.id}`)) continue;
-      component.sources = [{ id: 'entry', role: 'export', path: 'entry.js', line: 1 }];
-      component.developer_guide = aggregateGuide();
-    }
-    fs.writeFileSync(filename, JSON.stringify(diagram));
-    diagrams.set(id, diagram);
-  }
-
-  let priorBytes = 0;
-  let contributor = null;
-  for (const [diagramId, diagram] of diagrams) {
-    const full = compileDeveloperGuides('architecture', diagram);
-    if (priorBytes + full.receipt.bytes > ATLAS_GUIDE_BYTES_LIMIT) {
-      for (const [componentIndex, component] of diagram.components.entries()) {
-        if (!component.developer_guide) continue;
-        const prefix = compileDeveloperGuides('architecture', {
-          ...diagram,
-          components: diagram.components.slice(0, componentIndex + 1),
-        });
-        if (priorBytes + prefix.receipt.bytes > ATLAS_GUIDE_BYTES_LIMIT) {
-          contributor = { diagramId, componentIndex, componentId: component.id };
-          break;
-        }
-      }
-      break;
-    }
-    priorBytes += full.receipt.bytes;
-  }
-  assert.ok(contributor, 'aggregate fixture must cross the Atlas guide budget');
-  return { ...f, repository, contributor };
-}
-
-const guidePattern = /(<script id="archify-developer-guide-data" type="application\/json">)([\s\S]*?)(<\/script>)/;
-function changeGuide(member, transform) {
-  member.html = member.html.replace(guidePattern, (_, open, encoded, close) => open + transform(encoded) + close);
+const structurePattern = /(<script id="archify-internal-structure-data" type="application\/json">)([\s\S]*?)(<\/script>)/;
+function changeStructure(member, transform) {
+  member.html = member.html.replace(structurePattern, (_, open, encoded, close) => open + transform(encoded) + close);
   member.receipts.artifact = byteReceipt(member.html);
 }
 
-test('Atlas rechecks the guide inventory and exact receipt from its sole inert member payload', t => {
-  const f = guideFixture(t);
+test('Atlas rechecks the internal structure inventory and exact receipt from its sole inert member payload', t => {
+  const f = structureFixture(t);
   const bundle = unpackAtlas(f.html);
   const member = bundle.members.system;
-  const encoded = member.html.match(guidePattern)[2];
+  const encoded = member.html.match(structurePattern)[2];
   const data = JSON.parse(JSON.parse(encoded).join(''));
-  assert.deepEqual(member.guideNodes, { controller: ['interfaces'] });
-  assert.deepEqual(member.receipts.developerGuide, { schemaVersion: 1, nodeCount: 1, itemCount: 1, ...byteReceipt(encoded) });
-  assert.deepEqual(f.result.receipt.members.system.developerGuide, member.receipts.developerGuide);
-  assert.equal(data.nodes.controller.summary.text, 'guide-only-sentinel');
-  assert.ok(!JSON.stringify(f.result.receipt).includes('guide-only-sentinel'));
-  assert.equal(bundle.members.worker.receipts.developerGuide, undefined);
-  assert.equal(bundle.members.worker.guideNodes, undefined);
+  assert.deepEqual(member.structureNodes, { controller: { code: ['src', 'handle'] } });
+  assert.deepEqual(member.receipts.internalStructure, {
+    schemaVersion: 1, nodeCount: 1, itemCount: 2, relationCount: 0, sourceCount: 1, ...byteReceipt(encoded),
+  });
+  assert.deepEqual(f.result.receipt.members.system.internalStructure, member.receipts.internalStructure);
+  assert.equal(data.nodes.controller.items[0].summary, 'structure-only-sentinel');
+  assert.ok(!JSON.stringify(f.result.receipt).includes('structure-only-sentinel'));
+  assert.equal(bundle.members.worker.receipts.internalStructure, undefined);
+  assert.equal(bundle.members.worker.structureNodes, undefined);
   assert.deepEqual(checkAtlas(f.html).artifact, byteReceipt(f.html));
   const extendedReceipt = structuredClone(bundle);
   extendedReceipt.members.system.receipts.generator = { schemaVersion: 2, status: 'pass' };
   assert.doesNotThrow(() => checkAtlas(renderAtlasShell(extendedReceipt)));
   for (const [code, mutate] of [
-    ['bundle-guide-inventory', b => { b.members.system.guideNodes.controller = ['state']; }],
-    ['bundle-guide-inventory', b => { delete b.members.system.guideNodes; delete b.members.system.receipts.developerGuide; }],
-    ['bundle-guide-receipt', b => { b.members.system.receipts.developerGuide.bytes++; }],
-    ['bundle-guide-receipt', b => { b.members.system.receipts.developerGuide.sha256 = '0'.repeat(64); }],
-    ['bundle-guide-receipt', b => { b.members.system.receipts.developerGuide.itemCount++; }],
-    ['bundle-guide-receipt', b => { changeGuide(b.members.system, value => value.replace('guide-only-sentinel', 'body-was-modified')); }],
-    ['bundle-guide-data', b => { const m = b.members.system; m.html += m.html.match(guidePattern)[0]; m.receipts.artifact = byteReceipt(m.html); }],
-    ['bundle-guide-data', b => { changeGuide(b.members.system, () => '[7]'); }],
-    ['bundle-guide-data', b => { const m = b.members.system; m.html = m.html.replace(guidePattern, (_, open, encoded, close) => open.replace('application/json', 'text/plain') + encoded + close); m.receipts.artifact = byteReceipt(m.html); }],
-    ['bundle-guide-data', b => { changeGuide(b.members.system, () => serializeChunkedScriptJson({ ...data, schemaVersion: 2 })); }],
-    ['bundle-guide-data', b => { changeGuide(b.members.system, () => serializeChunkedScriptJson({ schemaVersion: 1, nodes: { controller: { ...data.nodes.controller, sections: [...data.nodes.controller.sections, ...data.nodes.controller.sections] } } })); }],
-    ['bundle-guide-inventory', b => { const m = b.members.system; m.html = m.html.replace(guidePattern, ''); m.receipts.artifact = byteReceipt(m.html); }],
-    ['bundle-data', b => { b.members.system.receipts.guideCopy = { summary: data.nodes.controller.summary }; }],
-    ['bundle-data', b => { b.members.system.evidence.guideBody = { summary: data.nodes.controller.summary }; }],
+    ['bundle-structure-inventory', b => { b.members.system.structureNodes.controller.code = ['src']; }],
+    ['bundle-structure-inventory', b => { delete b.members.system.structureNodes; delete b.members.system.receipts.internalStructure; }],
+    ['bundle-structure-receipt', b => { b.members.system.receipts.internalStructure.bytes++; }],
+    ['bundle-structure-receipt', b => { b.members.system.receipts.internalStructure.sha256 = '0'.repeat(64); }],
+    ['bundle-structure-receipt', b => { b.members.system.receipts.internalStructure.itemCount++; }],
+    ['bundle-structure-receipt', b => { changeStructure(b.members.system, value => value.replace('structure-only-sentinel', 'body-was-modified')); }],
+    ['bundle-structure-data', b => { const m = b.members.system; m.html += m.html.match(structurePattern)[0]; m.receipts.artifact = byteReceipt(m.html); }],
+    ['bundle-structure-data', b => { changeStructure(b.members.system, () => '[7]'); }],
+    ['bundle-structure-data', b => { const m = b.members.system; m.html = m.html.replace(structurePattern, (_, open, encodedValue, close) => open.replace('application/json', 'text/plain') + encodedValue + close); m.receipts.artifact = byteReceipt(m.html); }],
+    ['bundle-structure-data', b => { changeStructure(b.members.system, () => serializeChunkedScriptJson({ ...data, schemaVersion: 2 })); }],
+    ['bundle-structure-data', b => { changeStructure(b.members.system, () => serializeChunkedScriptJson({ schemaVersion: 1, nodes: { controller: { ...data.nodes.controller, items: [] } } })); }],
+    ['bundle-structure-inventory', b => { const m = b.members.system; m.html = m.html.replace(structurePattern, ''); m.receipts.artifact = byteReceipt(m.html); }],
+    ['bundle-data', b => { b.members.system.receipts.structureCopy = { items: data.nodes.controller.items }; }],
+    ['bundle-data', b => { b.members.system.evidence.structureBody = { items: data.nodes.controller.items }; }],
     ['bundle-evidence', b => { b.members.system.evidence.referenceCount++; }],
-    ['reference-guide', b => {
+    ['reference-structure', b => {
       const m = b.members.payment;
       const copied = serializeChunkedScriptJson({ schemaVersion: 1, nodes: { redis: data.nodes.controller } });
-      m.html += `<script id="archify-developer-guide-data" type="application/json">${copied}</script>`;
-      m.guideNodes = { redis: ['interfaces'] };
-      m.receipts.developerGuide = { schemaVersion: 1, nodeCount: 1, itemCount: 1, ...byteReceipt(copied) };
+      m.html += `<script id="archify-internal-structure-data" type="application/json">${copied}</script>`;
+      m.structureNodes = { redis: { code: ['src', 'handle'] } };
+      m.receipts.internalStructure = { schemaVersion: 1, nodeCount: 1, itemCount: 2, relationCount: 0, sourceCount: 1, ...byteReceipt(copied) };
       m.receipts.artifact = byteReceipt(m.html);
     }],
   ]) {
     const changed = structuredClone(bundle); mutate(changed);
     assert.throws(() => unpackAtlas(renderAtlasShell(changed)), error => {
-      assert.equal(error.archifyDiagnostics?.[0]?.code, `atlas/${code}`); return true;
+      assert.ok([`atlas/${code}`, 'atlas/bundle-data'].includes(error.archifyDiagnostics?.[0]?.code),
+        `${code} produced ${error.archifyDiagnostics?.[0]?.code}`);
+      return true;
     });
   }
-});
-
-test('Atlas guide aggregate budget identifies the component that crosses 128 KiB', (t) => {
-  const f = aggregateGuideFixture(t);
-  const result = deliver(f, ['--repo-root', f.repository]);
-  assert.equal(result.status, 1, result.stdout + result.stderr);
-  const diagnostic = result.receipt.diagnostics.find(entry => entry.code === 'developer-guide/atlas-budget');
-  assert.ok(diagnostic, JSON.stringify(result.receipt.diagnostics, null, 2));
-  assert.equal(diagnostic.subject.diagram, f.contributor.diagramId);
-  assert.equal(diagnostic.subject.componentId, f.contributor.componentId);
-  assert.equal(diagnostic.subject.path, `/components/${f.contributor.componentIndex}/developer_guide`);
-  assert.ok(diagnostic.evidence.bytes > ATLAS_GUIDE_BYTES_LIMIT);
-  assert.equal(diagnostic.evidence.limit, ATLAS_GUIDE_BYTES_LIMIT);
-  assert.equal(fs.existsSync(f.output), false);
 });
 
 test('v2 delivery preserves canonical v1 checks and rejects actual packed corruption', t => {

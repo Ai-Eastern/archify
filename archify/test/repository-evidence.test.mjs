@@ -56,15 +56,15 @@ function evidencePayload(html) {
   return JSON.parse(match[1]);
 }
 
-function developerGuidePayload(html) {
-  const matches = [...html.matchAll(/<script id="archify-developer-guide-data" type="application\/json">([\s\S]*?)<\/script>/g)];
-  assert.equal(matches.length, 1, 'expected one developer guide payload');
+function internalStructurePayload(html) {
+  const matches = [...html.matchAll(/<script id="archify-internal-structure-data" type="application\/json">([\s\S]*?)<\/script>/g)];
+  assert.equal(matches.length, 1, 'expected one internal structure payload');
   const chunks = JSON.parse(matches[0][1]);
-  assert.ok(Array.isArray(chunks) && chunks.length > 0, 'developer guide payload must be chunked');
+  assert.ok(Array.isArray(chunks) && chunks.length > 0, 'internal structure payload must be chunked');
   return JSON.parse(chunks.join(''));
 }
 
-test('repository-backed developer guide delivers one source-linked payload outside canonical SVG', () => {
+test('repository-backed internal structure delivers one source-linked payload outside canonical SVG', () => {
   const data = fixture();
   data.diagram.components[0].sources = [{
     id: 'route-entry',
@@ -74,69 +74,51 @@ test('repository-backed developer guide delivers one source-linked payload outsi
     end_line: 3,
     symbol: 'route',
   }];
-  data.diagram.components[0].developer_guide = {
-    implementation_scope: 'repository',
-    summary: {
-      text: 'Routes accepted input by its kind.',
-      source_refs: ['route-entry'],
-    },
-    sections: [{
-      kind: 'interfaces',
-      items: [{
-        id: 'route-interface',
-        title: 'route',
-        code: 'route(input)',
-        direction: 'provided',
-        text: 'Accepts one input and returns its kind.',
-        source_refs: ['route-entry'],
-      }],
-    }],
+  data.diagram.components[0].internal_structure = {
+    sources: data.diagram.components[0].sources,
+    items: [
+      { id: 'src', domain: 'code', kind: 'directory', label: 'src', summary: 'Application sources.' },
+      { id: 'route-interface', domain: 'code', kind: 'function', label: 'route', parent: 'src', signature: 'route(input)', summary: 'Accepts one input and returns its kind.', source_refs: ['route-entry'] },
+    ],
+    relations: [],
   };
+  delete data.diagram.components[0].sources;
   fs.writeFileSync(data.input, JSON.stringify(data.diagram));
-  const output = path.join(data.root, 'developer-guide.html');
+  const output = path.join(data.root, 'internal-structure.html');
 
   const result = run(['deliver', 'architecture', data.input, output, '--repo-root', data.root, '--json']);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const html = fs.readFileSync(output, 'utf8');
-  const payload = developerGuidePayload(html);
+  const payload = internalStructurePayload(html);
   assert.equal(payload.schemaVersion, 1);
   assert.deepEqual(Object.keys(payload.nodes), ['users']);
-  assert.equal(payload.nodes.users.implementationScope, 'repository');
-  assert.deepEqual(payload.nodes.users.summary.sourceRefs, ['route-entry']);
-  assert.equal(payload.nodes.users.sections[0].items[0].direction, 'provided');
+  assert.deepEqual(payload.nodes.users.items[1].sourceRefs, ['route-entry']);
+  assert.equal(payload.nodes.users.items[1].signature, 'route(input)');
   assert.equal(evidencePayload(html).nodes.users[0].id, 'route-entry');
   assert.equal(evidencePayload(html).nodes.users[0].symbolLocated, true);
   const svg = html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '';
   assert.doesNotMatch(svg, /Routes accepted input|route-interface|src\/router\.js/);
 });
 
-function attachRepositoryDeveloperGuide(data, source, {
+function attachRepositoryInternalStructure(data, source, {
   summaryText = 'Routes accepted input by its kind.',
   itemText = 'Accepts one input and returns its kind.',
 } = {}) {
-  data.diagram.components[0].sources = [source];
-  data.diagram.components[0].developer_guide = {
-    implementation_scope: 'repository',
-    summary: {
-      text: summaryText,
-      source_refs: [source.id],
-    },
-    sections: [{
-      kind: 'constraints',
-      items: [{
-        id: 'route-constraint',
-        title: 'route',
-        text: itemText,
-        source_refs: [source.id],
-      }],
-    }],
+  delete data.diagram.components[0].sources;
+  data.diagram.components[0].internal_structure = {
+    sources: [source],
+    items: [
+      { id: 'src', domain: 'code', kind: 'directory', label: 'src', summary: summaryText },
+      { id: 'route-constraint', domain: 'code', kind: 'function', label: 'route', parent: 'src', summary: itemText, source_refs: [source.id] },
+    ],
+    relations: [],
   };
   fs.writeFileSync(data.input, JSON.stringify(data.diagram));
 }
 
-test('developer guide source symbols resolve in the selected range at the pinned revision', () => {
+test('internal structure source symbols resolve in the selected range at the pinned revision', () => {
   const data = fixture();
-  attachRepositoryDeveloperGuide(data, {
+  attachRepositoryInternalStructure(data, {
     id: 'route-entry',
     role: 'definition',
     symbol: 'route',
@@ -167,7 +149,7 @@ test('developer guide source symbols resolve in the selected range at the pinned
   });
 });
 
-test('developer guide source symbols fail closed when missing from the pinned selected range', () => {
+test('internal structure source symbols fail closed when missing from the pinned selected range', () => {
   for (const { name, symbol, line, endLine, editWorkingTree } of [
     { name: 'missing', symbol: 'missingRoute', line: 1, endLine: 3 },
     {
@@ -178,7 +160,7 @@ test('developer guide source symbols fail closed when missing from the pinned se
     { name: 'outside-range', symbol: 'route', line: 2, endLine: 2 },
   ]) {
     const data = fixture();
-    attachRepositoryDeveloperGuide(data, {
+    attachRepositoryInternalStructure(data, {
       id: 'route-entry',
       role: 'definition',
       symbol,
@@ -198,7 +180,7 @@ test('developer guide source symbols fail closed when missing from the pinned se
   }
 });
 
-test('developer guide source symbols use Unicode token boundaries instead of substring matches', () => {
+test('internal structure source symbols use Unicode token boundaries instead of substring matches', () => {
   for (const { name, content, symbol } of [
     { name: 'ascii-suffix-of-unicode-identifier', content: 'export const πroute = true;\n', symbol: 'route' },
     { name: 'unicode-prefix-of-longer-identifier', content: 'export const 处理器扩展 = true;\n', symbol: '处理器' },
@@ -208,7 +190,7 @@ test('developer guide source symbols use Unicode token boundaries instead of sub
     git(data.root, 'add', 'src/router.js');
     git(data.root, 'commit', '-m', name);
     data.diagram.meta.repository.revision = git(data.root, 'rev-parse', 'HEAD');
-    attachRepositoryDeveloperGuide(data, {
+    attachRepositoryInternalStructure(data, {
       id: 'route-entry',
       role: 'definition',
       symbol,
@@ -226,13 +208,13 @@ test('developer guide source symbols use Unicode token boundaries instead of sub
   }
 });
 
-test('developer guide source symbols accept an exact Unicode identifier token', () => {
+test('internal structure source symbols accept an exact Unicode identifier token', () => {
   const data = fixture();
   fs.writeFileSync(path.join(data.root, 'src', 'router.js'), 'export const 处理器 = true;\n');
   git(data.root, 'add', 'src/router.js');
   git(data.root, 'commit', '-m', 'unicode symbol');
   data.diagram.meta.repository.revision = git(data.root, 'rev-parse', 'HEAD');
-  attachRepositoryDeveloperGuide(data, {
+  attachRepositoryInternalStructure(data, {
     id: 'route-entry',
     role: 'definition',
     symbol: '处理器',
@@ -247,7 +229,7 @@ test('developer guide source symbols accept an exact Unicode identifier token', 
   assert.equal(evidencePayload(fs.readFileSync(output, 'utf8')).nodes.users[0].symbolLocated, true);
 });
 
-test('local-only developer guide evidence keeps source identity without links or local roots', () => {
+test('local-only internal structure evidence keeps source identity without links or local roots', () => {
   const data = fixture();
   data.diagram.meta.repository = {
     url: 'http://git.internal/Team/repo',
@@ -255,7 +237,7 @@ test('local-only developer guide evidence keeps source identity without links or
     link_mode: 'local-only',
   };
   git(data.root, 'remote', 'set-url', 'origin', data.diagram.meta.repository.url);
-  attachRepositoryDeveloperGuide(data, {
+  attachRepositoryInternalStructure(data, {
     id: 'route-entry',
     role: 'definition',
     symbol: 'route',
@@ -279,11 +261,11 @@ test('local-only developer guide evidence keeps source identity without links or
     symbol: 'route',
     symbolLocated: true,
   });
-  assert.deepEqual(developerGuidePayload(html).nodes.users.summary.sourceRefs, ['route-entry']);
+  assert.deepEqual(internalStructurePayload(html).nodes.users.items[1].sourceRefs, ['route-entry']);
   assert.equal(html.includes(data.root), false, 'artifact must not disclose the local repository root');
 });
 
-test('developer guide and source evidence safely round-trip special text', () => {
+test('internal structure and source evidence safely round-trip special text', () => {
   const data = fixture();
   const symbol = 'route("</script> & \u2028")';
   const label = 'Source </script> & "quoted"';
@@ -293,7 +275,7 @@ test('developer guide and source evidence safely round-trip special text', () =>
   git(data.root, 'add', 'src/special.js');
   git(data.root, 'commit', '-m', 'special source text');
   data.diagram.meta.repository.revision = git(data.root, 'rev-parse', 'HEAD');
-  attachRepositoryDeveloperGuide(data, {
+  attachRepositoryInternalStructure(data, {
     id: 'special-source',
     role: 'documentation',
     symbol,
@@ -308,12 +290,12 @@ test('developer guide and source evidence safely round-trip special text', () =>
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const html = fs.readFileSync(output, 'utf8');
   const evidence = evidencePayload(html);
-  const guide = developerGuidePayload(html);
+  const structure = internalStructurePayload(html);
   assert.equal(evidence.nodes.users[0].symbol, symbol);
   assert.equal(evidence.nodes.users[0].label, label);
   assert.equal(evidence.nodes.users[0].symbolLocated, true);
-  assert.equal(guide.nodes.users.summary.text, summaryText);
-  assert.equal(guide.nodes.users.sections[0].items[0].text, itemText);
+  assert.equal(structure.nodes.users.items[0].summary, summaryText);
+  assert.equal(structure.nodes.users.items[1].summary, itemText);
   assert.doesNotMatch(html, /<img data-archify-injected>/);
   assert.doesNotMatch(html, /<svg onload=alert\(1\)>/);
 });
@@ -466,6 +448,21 @@ test('local-only preserves root, origin, commit, blob, path and line checks', ()
   const result = run(['validate', 'architecture', data.input, '--repo-root', data.root, '--json']);
   assert.equal(result.status, 1);
   assert.match(result.stdout, /must have an origin/);
+});
+
+test('repository root identity uses Git position and still rejects a real subdirectory', () => {
+  const data = fixture();
+  const output = path.join(data.root, 'root-boundary.html');
+  fs.writeFileSync(output, 'trusted previous artifact');
+
+  const result = run([
+    'deliver', 'architecture', data.input, output,
+    '--repo-root', path.join(data.root, 'src'), '--json',
+  ]);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.ok(JSON.parse(result.stdout).diagnostics.some(({ code }) =>
+    code === 'repository-evidence/root-not-top-level'), result.stdout);
+  assert.equal(fs.readFileSync(output, 'utf8'), 'trusted previous artifact');
 });
 
 test('unsupported web providers and invalid authored addresses fail without exposing credentials', () => {
