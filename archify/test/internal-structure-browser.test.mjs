@@ -109,7 +109,7 @@ test('internal structure preserves the graph, history, tree semantics, responsiv
     await inView(view, `document.querySelector('.node-structure-mode[data-structure-section="state"]').click()`);
 
     await evaluate('history.back()');
-    await waitFor(`(()=>{const w=${view};return w?.Archify?.internalStructure?.surface()==='graph'})()`, `${mode} Back did not restore the graph`);
+    await waitFor(`(()=>{const w=${view};return w?.Archify?.internalStructure?.surface()==='graph'&&w.document.activeElement?.id==='focus-internal-structure-code'})()`, `${mode} Back did not restore the graph and structure-entry focus`);
     assert.equal(await inView(view, `document.activeElement?.id`), 'focus-internal-structure-code',
       `${mode} Back must restore focus to the structure entry`);
     await evaluate('history.forward()');
